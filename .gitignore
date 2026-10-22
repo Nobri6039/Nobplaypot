@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 本地测试与备份（不要提交到 GitHub；大文件会被 GitHub 拒绝）
+*.log
+*.bak
+*.recovered.py
+*副本*.py
+_e2e.*
+_test_clip.mp4
+_test_*.mp4
+*.ts
