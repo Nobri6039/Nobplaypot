@@ -60,7 +60,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 
 APP_TITLE = "Nobplaypot"
-APP_VERSION = "2.1"
+APP_VERSION = "1.0"
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA") or os.path.expanduser("~"), "Nobplaypot"
 )
