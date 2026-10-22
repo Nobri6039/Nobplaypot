@@ -93,6 +93,16 @@ python Nobplaypot.py
 
 You can also double-click **`Nobplaypot.pyw`** to start without a console window.
 
+### Portable build (no Python install)
+
+The portable release bundles a **minimal Python 3.15 runtime** (Tkinter, `python-vlc`, `tkinterdnd2`) in the `python-runtime/` folder — about 34 MB, not a full Python installation. Start it by double-clicking **`启动 Nobplaypot.bat`** or running:
+
+```bat
+python-runtime\pythonw.exe Nobplaypot.pyw
+```
+
+VLC itself must still be installed on the machine; the portable package only covers the Python side.
+
 ## Usage
 
 ### Keyboard shortcuts

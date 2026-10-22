@@ -93,6 +93,16 @@ python Nobplaypot.py
 
 也可以直接双击 **`Nobplaypot.pyw`** 启动，不会弹出控制台窗口。
 
+### 免安装便携版
+
+便携包在 `python-runtime/` 目录里带了一套**最小的 Python 3.15 运行时**（含 Tkinter、`python-vlc`、`tkinterdnd2`），约 34 MB，不是完整的 Python 安装。双击 **`启动 Nobplaypot.bat`** 即可运行，或执行：
+
+```bat
+python-runtime\pythonw.exe Nobplaypot.pyw
+```
+
+VLC 本身仍需安装；便携包只带了 Python 环境。
+
 ## 使用说明
 
 ### 播放
