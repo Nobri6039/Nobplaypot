@@ -80,7 +80,8 @@ pip install python-vlc tkinterdnd2
 ## 安装与运行
 
 ```bash
-git clone https://github.com/<your-name>/Nobplaypot.git
+git clone https://github.com/Nobri6039/Nobplaypot
+
 cd Nobplaypot
 
 pip install python-vlc tkinterdnd2
@@ -165,13 +166,14 @@ Nobplaypot/
 └── README.md
 ```
 
+## 项目后续发展
+1. UUID标识
+2. 房间聊天室功能
+3. 聊天室消息弹幕发送
+4. 更流畅的同步体验以及更多功能扩展实现
+
 ## 致谢
 
 - [VLC media player](https://www.videolan.org/) / libvlc
 - [python-vlc](https://github.com/oaubert/python-vlc)
 - [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)
-- 界面中的图标、圆角、滑杆、下拉框等均为项目内自绘实现
-
-## License
-
-本项目暂未指定开源协议。发布到 GitHub 前，可以按需要补充 `LICENSE` 文件（例如 MIT 或 Apache-2.0）。
