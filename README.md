@@ -1,83 +1,85 @@
+**English** | [中文](README.zh-CN.md)
+
 # Nobplaypot
 
-一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看：主持推流、客户端加入、房间密码，以及遥控播放 / 暂停 / 拖进度 / 改速度。
+A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, made for LAN co-watching: host a stream, let others join, protect the room with a password, and control playback / seeking / speed remotely.
 
-> A dark-themed, VLC-powered video player with LAN co-watching: host/join, room password, and remote play / seek / speed control.
+> 一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看。
 
-界面完全自绘（不使用 ttk 默认浅色控件），带抗锯齿圆角与图标、深色标题栏，以及全屏时从底部浮出的控制岛。
+The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners and icons, a dark title bar, and a floating control island that rises from the bottom in fullscreen.
 
-![主界面](screenshots/main.png)
+![Main window](screenshots/main.png)
 
-## 截图
+## Screenshots
 
-**全屏悬浮控制岛**
+**Fullscreen control island**
 
-<img src="screenshots/fullscreen-dock.png" width="820" alt="全屏控制岛">
+<img src="screenshots/fullscreen-dock.png" width="820" alt="Fullscreen control island">
 
-**设置 · 流式传输**
+**Settings · Streaming**
 
-<img src="screenshots/settings.png" width="620" alt="设置">
+<img src="screenshots/settings.png" width="620" alt="Settings">
 
-**房间密码**
+**Room password**
 
 <p>
-<img src="screenshots/host-password.png" width="320" alt="主持端启用密码">
-<img src="screenshots/room-password.png" width="260" alt="客户端输入密码">
+<img src="screenshots/host-password.png" width="320" alt="Host password setup">
+<img src="screenshots/room-password.png" width="260" alt="Client password prompt">
 </p>
 
-**主题：紫罗兰**
+**Theme: Violet**
 
-<img src="screenshots/theme-violet.png" width="620" alt="紫罗兰主题">
+<img src="screenshots/theme-violet.png" width="620" alt="Violet theme">
 
-## 功能特性
+## Features
 
-### 播放
-- 拖放视频文件，或通过自绘的深色文件选择框打开
-- 播放 / 暂停、进度拖动、音量 / 静音、0.25x–4.0x 倍速
-- 全屏播放，方向键快退 / 快进，自动隐藏控制栏
-- 支持 MP4 / MKV / AVI / MOV / WMV / FLV / WEBM / TS / RMVB 等常见格式
+### Playback
+- Drag & drop a video file, or open one through the custom dark file dialog
+- Play / pause, seek, volume / mute, 0.25x–4.0x playback speed
+- Fullscreen playback with arrow-key seeking and auto-hiding controls
+- Supports MP4 / MKV / AVI / MOV / WMV / FLV / WEBM / TS / RMVB and more
 
-### 界面
-- 全部 Canvas 自绘：按钮、滑杆、下拉框、文件列表、提示框、空状态卡片
-- 抗锯齿图标与圆角，播放键为解析式抗锯齿圆
-- 5 套强调色（极光蓝 / 紫罗兰 / 青碧 / 玫瑰 / 琥珀）× 3 种界面底色（深蓝黑 / 纯黑 / 岩灰）
-- 悬停渐变动画，可在设置中关闭
+### UI
+- Everything drawn on Canvas: buttons, sliders, dropdowns, file list, dialogs, empty-state card
+- Anti-aliased icons and rounded corners; the play button is an analytically anti-aliased circle
+- 5 accent colors (Aurora / Violet / Teal / Rose / Amber) × 3 background tones (Midnight / Black / Slate)
+- Hover transition animations, which can be disabled in settings
 
-### 全屏控制岛
-- 鼠标移到屏幕最下方时，从底部浮出一块与屏幕边缘**不接触**的圆角悬浮控制条
-- 播放 / 暂停、后退 / 快进、进度条、音量、倍速、退出全屏
-- 鼠标离开 1.6 秒后自动滑下隐藏
+### Fullscreen control island
+- Move the mouse to the very bottom edge and a rounded floating bar rises — it sits **above** the bottom edge instead of sticking to it
+- Play / pause, skip back / forward, progress, volume, speed, exit fullscreen
+- Slides away 1.6 seconds after the mouse leaves
 
-### 流式传输（局域网）
-- **主持**：开放一个 TCP 指令端口（默认 5000）和一个 UDP 流端口（默认 5001），把画面转码成 H.264/TS 后推给客户端
-- **加入**：填写主持的指令地址和本机接收流地址，用本机 VLC 直接渲染主持推来的 UDP 画面
-- 状态同步：文件、进度、总时长、暂停、倍速；客户端遥控播放 / 暂停 / 拖动 / 倍速，音量与静音属于本机
-- 房间人数、成员列表实时同步，最多 32 人（可调）
+### Streaming (LAN)
+- **Host**: opens a TCP command port (default 5000) and a UDP stream port (default 5001), transcodes the picture to H.264/TS and pushes it to clients
+- **Join**: enter the host's command address and your local receiving address; your VLC renders the incoming UDP stream directly
+- State sync: file, position, duration, pause, speed; clients can remotely play / pause / seek / change speed, while volume and mute stay local
+- Room size and member list sync in real time, up to 32 people (configurable)
 
-### 房间密码
-- 主持开始主持时可选择是否启用密码（默认启用），密码只保存在主持端
-- 客户端加入时若房间有密码，会弹出密码框，密码**提交给主持端核验**，核验通过才真正加入
-- 常量时间比较、单连接最多 5 次尝试，密码不会随房间信息下发给其他客户端
+### Room password
+- The host can enable a password when starting (on by default); the password stays on the host only
+- When the room is protected, the client is prompted for the password, which is **verified by the host** before the client actually joins
+- Constant-time comparison, at most 5 attempts per connection, and the password is never sent to other clients
 
-### 推流中拖动进度 / 改速度
-- 客户端拖动只把指令发给主持，不在本地处理
-- 主持端收到跳转或速度变化后：**中断当前推流 → 用 `:start-time` / `:rate` 从新进度、新速度重建推流 → 广播 `resync` → 客户端重连画面**
-- 推流时间轴从 0 重新开始，客户端会在约一秒内恢复画面
+### Seeking / speed changes while streaming
+- Client seeks are never handled locally; the command is sent to the host
+- On a seek or speed change the host: **stops the current stream → rebuilds it from the new position / speed using `:start-time` / `:rate` → broadcasts `resync` → clients reconnect**
+- The stream timeline restarts from 0; clients are back within about a second
 
-## 环境要求
+## Requirements
 
-- **Windows 10 / 11（64 位）**：深色标题栏、窗口圆角等使用 Win32 API
-- **Python 3.10+**（开发与测试环境为 Python 3.15，Tk 9.0）
-- **VLC 3.x 桌面版（64 位）**：需要 `libvlc.dll`
-- Python 依赖：
+- **Windows 10 / 11 (64-bit)** — the dark title bar and rounded window corners use Win32 APIs
+- **Python 3.10+** (developed and tested on Python 3.15, Tk 9.0)
+- **VLC 3.x desktop (64-bit)** with `libvlc.dll`
+- Python packages:
 
 ```bash
 pip install python-vlc tkinterdnd2
 ```
 
-> 如果程序提示找不到 VLC，请先安装 64 位 VLC；也可以设置环境变量 `VLC_HOME` 指向 VLC 安装目录（含 `libvlc.dll`）。
+> If the app cannot find VLC, install 64-bit VLC or set the `VLC_HOME` environment variable to the VLC installation folder that contains `libvlc.dll`.
 
-## 安装与运行
+## Installation & Running
 
 ```bash
 git clone https://github.com/Nobri6039/Nobplaypot
@@ -89,91 +91,98 @@ pip install python-vlc tkinterdnd2
 python Nobplaypot.py
 ```
 
-也可以直接双击 **`Nobplaypot.pyw`** 启动，不会弹出控制台窗口。
+You can also double-click **`Nobplaypot.pyw`** to start without a console window.
 
-## 使用说明
+## Usage
 
-### 播放
-| 快捷键 | 功能 |
+### Keyboard shortcuts
+| Shortcut | Action |
 | --- | --- |
-| `空格` | 播放 / 暂停 |
-| `←` / `→` | 快退 / 快进（步长可在设置里改，默认 5 秒） |
-| `↑` / `↓` | 音量 +5 / -5 |
-| `F` | 进入 / 退出全屏 |
-| `Esc` | 退出全屏 |
-| `Ctrl+O` | 打开文件 |
-| `Ctrl+L` | 打开日志目录 |
+| `Space` | Play / pause |
+| `←` / `→` | Seek back / forward (step configurable, 5 s by default) |
+| `↑` / `↓` | Volume +5 / −5 |
+| `F` | Enter / exit fullscreen |
+| `Esc` | Exit fullscreen |
+| `Ctrl+O` | Open a file |
+| `Ctrl+L` | Open the log folder |
 
-### 主持一次流式会话
-1. 先打开要观看的视频；
-2. 点左下角的流式按钮 → **主持流式传输**；
-3. 填写指令端口和流端口（默认 5000 / 5001）；
-4. 「启用房间密码」默认开启，输入密码（或关掉开关使用无密码房间）；
-5. 点「开始主持」。
+### Host a streaming session
+1. Open the video you want to watch;
+2. Click the stream button at the bottom-left → **Host stream**;
+3. Enter the command and stream ports (default 5000 / 5001);
+4. "Enable room password" is on by default — enter a password (or turn it off for an open room);
+5. Click **Start hosting**.
 
-### 加入会话
-1. 点流式按钮 → **加入流式传输**；
-2. 指令地址填主持的 IP:端口（如 `192.168.1.10:5000`）；
-3. 流接收地址填**本机**接收 UDP 的地址（如 `192.168.1.20:5001`）；
-4. 如果房间有密码，会弹出密码框，输入正确密码后加入。
+### Join a session
+1. Click the stream button → **Join stream**;
+2. Command address: the host's IP:port (e.g. `192.168.1.10:5000`);
+3. Stream address: the **local** UDP receiving address (e.g. `192.168.1.20:5001`);
+4. If the room has a password, a password dialog appears; enter the correct password to join.
 
-> 局域网使用最省事。公网使用需要在主持端路由器上把 TCP 指令端口和 UDP 流端口映射出去，并放行防火墙；跨公网时 UDP 丢包也会影响观看体验。
+> LAN is the easiest setup. For the internet, forward the TCP command port and the UDP stream port on the host's router and allow them through the firewall; UDP packet loss over the internet also affects playback quality.
 
-### 设置
-主界面右下角的齿轮按钮打开设置，分三页：
+### Settings
+Open settings with the gear button at the bottom-right. There are three pages:
 
-- **常规**：解码方式（自动 / 硬件 / 软件，重启生效）、默认音量、快进步长、打开后自动播放、记住上次目录、日志级别
-- **外观**：强调色、界面底色、悬停动画（颜色与底色重启后生效）
-- **流式传输**：房间人数上限、单客户端带宽、推流分辨率（480p / 720p / 1080p / 原生）、推流帧率、音频码率、x264 预设、关键帧间隔、客户端缓冲、心跳间隔、离线判定、默认端口
+- **General**: decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
+- **Appearance**: accent color, background tone, hover animations (colors apply after restart)
+- **Streaming**: max room size, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
 
-设置保存在 `%APPDATA%\Nobplaypot\config.json`。流式参数在下次重建推流（客户端加入 / 拖进度 / 改速度）时生效。
+Settings are stored in `%APPDATA%\Nobplaypot\config.json`. Streaming changes apply on the next stream rebuild (client join / seek / speed change).
 
-## 数据与日志
+## Data & Logs
 
-| 内容 | 位置 |
+| Item | Location |
 | --- | --- |
-| 配置 | `%APPDATA%\Nobplaypot\config.json` |
-| 日志 | `%APPDATA%\Nobplaypot\logs\nobplaypot.log`（2 MB 轮转，保留 3 份） |
+| Config | `%APPDATA%\Nobplaypot\config.json` |
+| Logs | `%APPDATA%\Nobplaypot\logs\nobplaypot.log` (2 MB rotation, 3 files) |
 
-日志相关环境变量：
+Log-related environment variables:
 
-- `NOBPLAYPOT_LOG_LEVEL=DEBUG`：输出调试日志
-- `NOBPLAYPOT_LOG_FILE=<路径>`：把日志写到指定文件
+- `NOBPLAYPOT_LOG_LEVEL=DEBUG`: enable debug logging
+- `NOBPLAYPOT_LOG_FILE=<path>`: write logs to a specific file
 
-## 实现说明
+## Implementation notes
 
-- **指令通道**：TCP + 换行分隔的 JSON，心跳 2 秒，8 秒无消息判定离线
-- **流通道**：UDP（TS 封装），主持端用 libvlc 的 `sout` 转码成 H.264 + AAC
-- **跳转 / 变速**：libvlc 的 sout 链原地 `seek` 会永久断流，因此采用「中断推流 → 按新进度 / 新速度重建 → 广播 `resync` → 客户端重连」的方式
-- **密码**：主持端在客户端注册前核验（`hmac.compare_digest`），未通过不进房间、不计人数、不推流
-- **稳定性**：libvlc 停止 UDP 输入 / 释放播放器偶尔会阻塞，相关回收都放在后台线程，界面线程不做可能阻塞的 VLC 调用；并带 UI 看门狗记录卡顿
+- **Command channel**: TCP + newline-delimited JSON; heartbeat every 2 seconds, offline after 8 seconds without messages
+- **Stream channel**: UDP (TS), with the host transcoding to H.264 + AAC through libvlc's `sout`
+- **Seek / speed**: libvlc's sout chain breaks permanently on an in-place `seek`, so the host stops the stream, rebuilds it with `:start-time` / `:rate`, broadcasts `resync`, and lets clients reconnect
+- **Password**: verified by the host before a client is registered (`hmac.compare_digest`); unauthenticated connections never enter the room, count toward the room size, or receive the stream
+- **Stability**: libvlc can block for a long time when stopping UDP input or releasing a player, so those calls run on background threads and never on the UI thread; a UI watchdog records stalls
 
-## 已知限制
+## Known limitations
 
-- 推流中拖动进度或修改速度时，客户端会短暂重连一次画面（推流链必须重建）
-- 转码会占用 CPU，可降低分辨率 / 码率 / 帧率；速度与推流同时使用时对 CPU 要求更高
-- 一个主持端对应一个房间；主要面向局域网使用
-- 暂不支持播放列表、字幕、画面比例切换等进阶播放功能
+- Seeking or changing speed while streaming briefly reconnects clients (the stream chain must be rebuilt)
+- Transcoding uses CPU; lower the resolution / bitrate / frame rate if needed, and note that speed + streaming is more demanding
+- One host = one room; designed mainly for LAN use
+- No playlist, subtitles, or aspect-ratio switching yet
 
-## 项目结构
+## Project structure
 
 ```text
 Nobplaypot/
-├── Nobplaypot.py      # 主程序（单文件）
-├── Nobplaypot.pyw     # 无控制台启动入口
-├── screenshots/       # README 截图
+├── Nobplaypot.py      # main program (single file)
+├── Nobplaypot.pyw     # console-less launcher
+├── screenshots/       # README screenshots
+├── README.md          # English (default)
+├── README.zh-CN.md    # Chinese
 ├── .gitignore
-└── README.md
+└── LICENSE
 ```
 
-## 项目后续发展
-1. UUID标识
-2. 房间聊天室功能
-3. 聊天室消息弹幕发送
-4. 更流畅的同步体验以及更多功能扩展实现
+## Roadmap
 
-## 致谢
+1. UUID-based identity
+2. In-room chat
+3. Danmaku (bullet comments) for chat messages
+4. Smoother sync and more feature extensions
+
+## Acknowledgements
 
 - [VLC media player](https://www.videolan.org/) / libvlc
 - [python-vlc](https://github.com/oaubert/python-vlc)
 - [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)
+
+## License
+
+[MIT](LICENSE)
