@@ -175,7 +175,8 @@ Nobplaypot/
 1. UUID-based identity
 2. In-room chat
 3. Danmaku (bullet comments) for chat messages
-4. Smoother sync and more feature extensions
+4. Expand to more system platforms
+5. Smoother sync and more feature extensions
 
 ## Acknowledgements
 
