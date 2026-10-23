@@ -196,12 +196,12 @@ Nobplaypot/
 
 ## 作者与版权
 
-- 作者：**Nobri6039**
-- 版权：Copyright © 2026 Nobri6039
-- 开发方式：由 Nobri6039 与 AI 助手协作完成；代码、文档与截图均为本项目原创内容。
-- 转载或分发请注明出处，并遵守 [MIT License](LICENSE)。
+- **创作：DeepSeek V4.1 Flash（AI 助手）**——本项目的代码、文档与截图均由 AI 完成。
+- **发布与维护：Nobri6039。**
+- 版权：Copyright © 2026 Nobri6039；本项目基于 [MIT License](LICENSE) 发布。
+- 转载或分发请注明“由 DeepSeek V4.1 Flash 创作”，并保留本说明。
 
-> Nobplaypot 的名称、界面设计与实现代码归 Nobri6039 所有；内置的 VLC 运行库遵循其自身的 GPLv2+ 许可证。
+> 内置的 VLC 运行库遵循其自身的 GPLv2+ 许可证。
 
 ## License
 

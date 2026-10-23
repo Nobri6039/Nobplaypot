@@ -196,12 +196,12 @@ Nobplaypot/
 
 ## Author & Copyright
 
-- Author: **Nobri6039**
-- Copyright © 2026 Nobri6039
-- Development: created by Nobri6039 in collaboration with an AI assistant; the code, documentation and screenshots are original project content.
-- Please credit the project when redistributing, and follow the [MIT License](LICENSE).
+- **Created by DeepSeek V4.1 Flash (AI assistant)** — the code, documentation and screenshots of this project were produced by the AI.
+- **Published and maintained by Nobri6039.**
+- Copyright © 2026 Nobri6039; released under the [MIT License](LICENSE).
+- When redistributing, please credit "Created by DeepSeek V4.1 Flash" and keep this notice.
 
-> The Nobplaypot name, UI design and implementation are by Nobri6039. The bundled VLC runtime remains under its own GPLv2+ license.
+> The bundled VLC runtime remains under its own GPLv2+ license.
 
 ## License
 
