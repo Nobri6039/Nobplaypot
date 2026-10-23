@@ -1139,24 +1139,47 @@ def icon_gear(canvas, cx, cy, size, color):
 # ---------------------------------------------------------------------------
 # VLC / 拖放
 # ---------------------------------------------------------------------------
+_DLL_DIR_HANDLES = []
+
+
 def _prepare_vlc_dll_path():
-    """Windows 下把 VLC 安装目录加入 DLL 搜索路径。"""
+    """Windows 下优先加载随程序附带的 VLC 运行库, 找不到再退回系统 VLC。
+
+    顺序: 程序目录/vlc-runtime -> 上级目录/vlc-runtime -> 当前目录/vlc-runtime
+          -> VLC_HOME -> Program Files 下的 VLC 安装目录
+    找到后通过 PYTHON_VLC_LIB_PATH / PYTHON_VLC_MODULE_PATH 明确告诉
+    python-vlc 使用这一份 libvlc 与插件目录, 避免串到系统安装的 VLC。
+    """
     if os.name != "nt":
-        return
+        return None
+    app_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.join(app_dir, "vlc-runtime"),
+        os.path.join(os.path.dirname(app_dir), "vlc-runtime"),
+        os.path.join(os.getcwd(), "vlc-runtime"),
         os.environ.get("VLC_HOME", ""),
         os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "VideoLAN", "VLC"),
         os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "VideoLAN", "VLC"),
     ]
     for folder in candidates:
-        if folder and os.path.isfile(os.path.join(folder, "libvlc.dll")):
-            os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
-            if hasattr(os, "add_dll_directory"):
-                os.add_dll_directory(folder)
-            return
+        if not folder:
+            continue
+        dll = os.path.join(folder, "libvlc.dll")
+        if not os.path.isfile(dll):
+            continue
+        plugins = os.path.join(folder, "plugins")
+        os.environ["PYTHON_VLC_LIB_PATH"] = dll
+        if os.path.isdir(plugins):
+            os.environ["PYTHON_VLC_MODULE_PATH"] = plugins
+            os.environ["VLC_PLUGIN_PATH"] = plugins
+        os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            _DLL_DIR_HANDLES.append(os.add_dll_directory(folder))
+        return folder
+    return None
 
 
-_prepare_vlc_dll_path()
+_VLC_HOME_DIR = _prepare_vlc_dll_path()
 
 try:
     import vlc
@@ -5565,7 +5588,13 @@ class VideoPlayerApp:
             self._alert("VLC 初始化失败", str(error))
             return
 
-        log.info("VLC 播放内核就绪: %s", vlc_version_text())
+        dll_path = ""
+        try:
+            dll_path = str(getattr(getattr(vlc, "dll", None), "_name", "") or "")
+        except Exception:
+            dll_path = ""
+        log.info("VLC 播放内核就绪: %s (%s)", vlc_version_text(),
+                 dll_path or _VLC_HOME_DIR or "未知路径")
         self.player.set_rate(1.0)
         self._attach_video_output()
 
