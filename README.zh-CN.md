@@ -70,7 +70,7 @@
 
 - **Windows 10 / 11（64 位）**：深色标题栏、窗口圆角等使用 Win32 API
 - **Python 3.10+**（开发与测试环境为 Python 3.15，Tk 9.0）
-- **VLC 3.x 桌面版（64 位）**：需要 `libvlc.dll`
+- **VLC 3.x 桌面版（64 位）**：需要 `libvlc.dll`（便携版已内置）
 - Python 依赖：
 
 ```bash
@@ -95,13 +95,13 @@ python Nobplaypot.py
 
 ### 免安装便携版
 
-便携包在 `python-runtime/` 目录里带了一套**最小的 Python 3.15 运行时**（含 Tkinter、`python-vlc`、`tkinterdnd2`），约 34 MB，不是完整的 Python 安装。双击 **`启动 Nobplaypot.bat`** 即可运行，或执行：
+便携包在 `python-runtime/` 目录里带了一套**最小的 Python 3.15 运行时**（含 Tkinter、`python-vlc`、`tkinterdnd2`），约 34 MB，不是完整的 Python 安装；另外在 `vlc-runtime/` 内置了一套**最小的 VLC 3.0.24 运行库**（约 53 MB）。双击 **`启动 Nobplaypot.bat`** 即可运行，或执行：
 
 ```bat
 python-runtime\pythonw.exe Nobplaypot.pyw
 ```
 
-VLC 本身仍需安装；便携包只带了 Python 环境。
+便携版无需安装 Python 或 VLC。内置的 VLC 运行库遵循 GPLv2+，许可证见 `vlc-runtime/COPYING.txt`，源码见 videolan.org。
 
 ## 使用说明
 
@@ -193,6 +193,15 @@ Nobplaypot/
 - [VLC media player](https://www.videolan.org/) / libvlc
 - [python-vlc](https://github.com/oaubert/python-vlc)
 - [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)
+
+## 作者与版权
+
+- 作者：**Nobri6039**
+- 版权：Copyright © 2026 Nobri6039
+- 开发方式：由 Nobri6039 与 AI 助手协作完成；代码、文档与截图均为本项目原创内容。
+- 转载或分发请注明出处，并遵守 [MIT License](LICENSE)。
+
+> Nobplaypot 的名称、界面设计与实现代码归 Nobri6039 所有；内置的 VLC 运行库遵循其自身的 GPLv2+ 许可证。
 
 ## License
 

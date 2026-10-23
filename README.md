@@ -70,7 +70,7 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 
 - **Windows 10 / 11 (64-bit)** — the dark title bar and rounded window corners use Win32 APIs
 - **Python 3.10+** (developed and tested on Python 3.15, Tk 9.0)
-- **VLC 3.x desktop (64-bit)** with `libvlc.dll`
+- **VLC 3.x desktop (64-bit)** with `libvlc.dll` (already bundled in the portable release)
 - Python packages:
 
 ```bash
@@ -95,13 +95,13 @@ You can also double-click **`Nobplaypot.pyw`** to start without a console window
 
 ### Portable build (no Python install)
 
-The portable release bundles a **minimal Python 3.15 runtime** (Tkinter, `python-vlc`, `tkinterdnd2`) in the `python-runtime/` folder — about 34 MB, not a full Python installation. Start it by double-clicking **`启动 Nobplaypot.bat`** or running:
+The portable release bundles a **minimal Python 3.15 runtime** (Tkinter, `python-vlc`, `tkinterdnd2`) in `python-runtime/` — about 34 MB, not a full Python installation — plus a **minimal VLC 3.0.24 runtime** in `vlc-runtime/` (about 53 MB). Start it by double-clicking **`启动 Nobplaypot.bat`** or running:
 
 ```bat
 python-runtime\pythonw.exe Nobplaypot.pyw
 ```
 
-VLC itself must still be installed on the machine; the portable package only covers the Python side.
+No Python or VLC installation is required for the portable release. The bundled VLC runtime remains under GPLv2+; see `vlc-runtime/COPYING.txt` and videolan.org for its source.
 
 ## Usage
 
@@ -193,6 +193,15 @@ Nobplaypot/
 - [VLC media player](https://www.videolan.org/) / libvlc
 - [python-vlc](https://github.com/oaubert/python-vlc)
 - [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)
+
+## Author & Copyright
+
+- Author: **Nobri6039**
+- Copyright © 2026 Nobri6039
+- Development: created by Nobri6039 in collaboration with an AI assistant; the code, documentation and screenshots are original project content.
+- Please credit the project when redistributing, and follow the [MIT License](LICENSE).
+
+> The Nobplaypot name, UI design and implementation are by Nobri6039. The bundled VLC runtime remains under its own GPLv2+ license.
 
 ## License
 

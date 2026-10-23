@@ -1,5 +1,7 @@
 """Nobplaypot — 基于 VLC(libvlc) + Tkinter 的深色视频播放器。
 
+版权: Copyright (c) 2026 Nobri6039 · MIT License. 内置的 VLC 运行库遵循 GPLv2+。
+
 界面为全自绘的深色主题(不使用 ttk 默认浅色控件):
   * 按钮 / 滑杆 / 下拉框 / 文件列表 / 提示框全部 Canvas 自绘, 无系统浅色组件
   * 深色标题栏(Win10/11 DWM), 深色自绘文件选择框
