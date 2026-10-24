@@ -86,6 +86,7 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - After joining, a chat panel appears on the right of the main window (WeChat-style message list with an input box)
 - The host stores all messages; guests send over the command port and only display a message after the host relays it back to everyone (including the sender)
 - New guests receive the full history; the host keeps the latest 200 messages by default (configurable in **Settings → Chat room**)
+- The host can enforce a per-member send interval (unlimited / 1 / 2 / 3 / 5 s); rejected messages show a gray "sending too fast" watermark inside the input box
 
 ### Danmaku
 - New chat messages float over the video as danmaku, right to left — works in windowed and fullscreen mode
@@ -167,7 +168,7 @@ Open settings with the gear button at the bottom-right. There are four pages:
 
 - **General**: decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
 - **Appearance**: accent color, background tone, hover animations (colors apply after restart)
-- **Chat room**: username, chat history limit, danmaku on/off, size, speed, color, area
+- **Chat room**: username, member message rate limit, chat history limit, danmaku on/off, size, speed, color, area
 - **Streaming**: max room size, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
 
 Settings are stored in `%APPDATA%\Nobplaypot\config.json`. Streaming changes apply on the next stream rebuild (client join / seek / speed change).

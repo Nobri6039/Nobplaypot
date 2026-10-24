@@ -187,6 +187,7 @@ DEFAULT_SETTINGS = {
     # 流式传输
     "max_clients": 32,
     "chat_limit": 200,
+    "chat_rate_limit": 1,
     "danmaku": True,
     "danmaku_size": 20,
     "danmaku_speed": 100,
@@ -313,6 +314,13 @@ def normalize_settings(data):
             value = _clamp_setting(key, value, default)
         result[key] = value
     result["username"] = clean_username(result.get("username"))
+    try:
+        rate_limit = int(result.get("chat_rate_limit", 1))
+    except (TypeError, ValueError):
+        rate_limit = 1
+    if rate_limit not in (0, 1, 2, 3, 5):
+        rate_limit = 1
+    result["chat_rate_limit"] = rate_limit
     if result["decode_mode"] not in DECODE_LABELS:
         result["decode_mode"] = DEFAULT_SETTINGS["decode_mode"]
     if result["accent"] not in ACCENTS:
@@ -3206,9 +3214,11 @@ class _StreamDialogBase(tk.Toplevel):
         self.transient(master)
         self.result = None
         self._drag_offset = None
+        self._drag_active = False
         # 整个顶部区域(含标题下方留白)都能拖动, 不只是文字标签
         self.bind("<Button-1>", self._start_drag_top, add="+")
         self.bind("<B1-Motion>", self._drag_top, add="+")
+        self.bind("<ButtonRelease-1>", self._end_drag_top, add="+")
         self.body = tk.Frame(self, bg=C.BG, padx=28, pady=24)
         self.body.pack(fill=tk.BOTH, expand=True)
         self.error_label = tk.Label(self.body, text="", bg=C.BG, fg=C.DANGER,
@@ -3219,17 +3229,24 @@ class _StreamDialogBase(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", lambda: self.finish(None))
 
     def _start_drag_top(self, event):
+        self._drag_active = False
+        self._drag_offset = None
         if event.y_root - self.winfo_rooty() > 54:
             return
+        self._drag_active = True
         self._drag_offset = (event.x_root - self.winfo_x(),
                              event.y_root - self.winfo_y())
 
     def _drag_top(self, event):
-        if self._drag_offset is None:
+        if not self._drag_active or self._drag_offset is None:
             return
         x = event.x_root - self._drag_offset[0]
         y = event.y_root - self._drag_offset[1]
         self.geometry(f"+{x}+{y}")
+
+    def _end_drag_top(self, _event=None):
+        self._drag_active = False
+        self._drag_offset = None
 
     def show_error(self, text):
         self.error_label.configure(text=text)
@@ -3416,9 +3433,6 @@ class RoomPasswordDialog(_StreamDialogBase):
                               radius=8, bg=C.BG, font=ui_font(12),
                               command=self._do_cancel, tooltip="关闭")
         close.pack(side=tk.RIGHT)
-        for widget in (header, title):
-            widget.bind("<Button-1>", self._start_drag)
-            widget.bind("<B1-Motion>", self._on_drag)
         tk.Label(self.body, text="主持开启了房间密码, 请输入密码后加入。",
                  bg=C.BG, fg=C.TEXT_MUTED, font=ui_font(9), anchor="w").pack(
             fill=tk.X, pady=(4, 12))
@@ -3465,21 +3479,6 @@ class RoomPasswordDialog(_StreamDialogBase):
                 self.entry.focus_set()
         except tk.TclError:
             pass
-
-    def _start_drag(self, event):
-        self._drag_offset = (event.x_root - self.winfo_x(),
-                             event.y_root - self.winfo_y())
-
-    def _start_drag_top(self, event):
-        if event.y_root - self.winfo_rooty() <= 54:
-            self._start_drag(event)
-
-    def _on_drag(self, event):
-        if self._drag_offset is None:
-            return
-        x = event.x_root - self._drag_offset[0]
-        y = event.y_root - self._drag_offset[1]
-        self.geometry(f"+{x}+{y}")
 
     def _do_submit(self):
         if self._waiting:
@@ -3874,6 +3873,11 @@ class SettingsDialog(_StreamDialogBase):
         row = self._row(page, "用户名",
                         "加入房间时显示的名称（4–32 个字符）")
         self._text_entry(row, "username", width=18)
+        row = self._row(page, "成员消息频率上限",
+                        "同一成员两次发言的最小间隔")
+        self._dropdown(row, "chat_rate_limit", [
+            (0, "无限制"), (1, "1 秒"), (2, "2 秒"), (3, "3 秒"), (5, "5 秒"),
+        ])
         row = self._row(page, "聊天记录上限", "主持端保存的聊天消息条数")
         self._slider(row, "chat_limit", 20, 500, lambda v: f"{int(round(v))} 条")
         row = self._row(page, "消息弹幕", "新聊天消息以弹幕浮动在视频上")
@@ -3998,6 +4002,7 @@ class RoomMembersDialog(tk.Toplevel):
         self._is_host = is_host
         self._my_id = my_id
         self._drag_offset = None
+        self._drag_active = False
         self._members = []
         self._width = 440
         self._height = 500
@@ -4019,6 +4024,7 @@ class RoomMembersDialog(tk.Toplevel):
             widget.bind("<B1-Motion>", self._on_drag)
         self.bind("<Button-1>", self._start_drag_top, add="+")
         self.bind("<B1-Motion>", self._on_drag, add="+")
+        self.bind("<ButtonRelease-1>", self._end_drag, add="+")
 
         wrap = tk.Frame(self, bg=C.BG)
         wrap.pack(fill=tk.BOTH, expand=True, padx=18)
@@ -4104,12 +4110,14 @@ class RoomMembersDialog(tk.Toplevel):
     def _on_wheel(self, event):
         try:
             self._canvas.yview_scroll(int(-event.delta / 120), "units")
+            self._check_bottom_after_scroll()
         except tk.TclError:
             pass
 
     def _on_scrollbar(self, event):
         height = self._scrollbar.winfo_height() or 1
         self._canvas.yview_moveto(max(0.0, min(1.0, event.y / height)))
+        self._check_bottom_after_scroll()
 
     def _update_scrollbar(self):
         bar = self._scrollbar
@@ -4130,19 +4138,26 @@ class RoomMembersDialog(tk.Toplevel):
 
     # ------------------------------------------------------------ 拖动/关闭
     def _start_drag(self, event):
+        self._drag_active = True
         self._drag_offset = (event.x_root - self.winfo_x(),
                              event.y_root - self.winfo_y())
 
     def _start_drag_top(self, event):
+        self._drag_active = False
+        self._drag_offset = None
         if event.y_root - self.winfo_rooty() <= 54:
             self._start_drag(event)
 
     def _on_drag(self, event):
-        if self._drag_offset is None:
+        if not self._drag_active or self._drag_offset is None:
             return
         x = event.x_root - self._drag_offset[0]
         y = event.y_root - self._drag_offset[1]
         self.geometry(f"+{x}+{y}")
+
+    def _end_drag(self, _event=None):
+        self._drag_active = False
+        self._drag_offset = None
 
     def _close(self):
         if self._on_close is not None:
@@ -4164,6 +4179,8 @@ class ChatPanel(tk.Frame):
         self.pack_propagate(False)
         self._on_send = on_send
         self._messages = []
+        self._max_rows = 200
+        self._scroll_job = None
 
         header = tk.Frame(self, bg=C.BG)
         header.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
@@ -4186,6 +4203,12 @@ class ChatPanel(tk.Frame):
         )
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7)
         self.entry.bind("<Return>", lambda _e: self._submit())
+        self._hint_text = ""
+        self.hint_label = tk.Label(
+            self.entry, text="", bg=C.SURFACE, fg=C.TEXT_DIM,
+            font=ui_font(10), anchor="w", cursor="xterm")
+        self.hint_label.bind("<Button-1>", lambda _e: self.entry.focus_set())
+        self.entry_var.trace_add("write", self._on_entry_changed)
         RoundedButton(input_bar, text="发送", variant="primary", width=72,
                       height=32, radius=8, bg=C.BG,
                       command=self._submit).pack(side=tk.RIGHT, padx=(8, 0))
@@ -4218,18 +4241,35 @@ class ChatPanel(tk.Frame):
         self.empty_label = tk.Label(self._inner, text="还没有消息，打个招呼吧",
                                     bg=C.BG, fg=C.TEXT_DIM, font=ui_font(9))
         self.empty_label.pack(pady=30)
+        self._unread = 0
+        self.unread_label = tk.Label(
+            self._canvas, text="", bg=C.ACCENT_SOFT, fg=C.ACCENT,
+            font=ui_font(8), padx=10, pady=4, cursor="hand2")
+        self.unread_label.bind("<Button-1>",
+                               lambda _e: self.scroll_to_bottom())
 
     # ------------------------------------------------------------ 数据
     def add_message(self, message, mine=False):
+        at_bottom = self._at_bottom()
         self._messages.append(message)
         self._render_message(message, mine=mine)
+        while len(self._messages) > self._max_rows:
+            self._messages.pop(0)
+            children = self._list.winfo_children()
+            if not children:
+                break
+            children[0].destroy()
         self.count_label.configure(text=f"{len(self._messages)} 条")
         self.empty_label.pack_forget()
-        self.after_idle(self._scroll_bottom)
+        if mine or at_bottom:
+            self._schedule_scroll()
+        else:
+            self._unread += 1
+            self._update_unread()
 
     def set_messages(self, messages, my_id=""):
         self._clear_rows()
-        self._messages = list(messages or [])
+        self._messages = list(messages or [])[-self._max_rows:]
         for message in self._messages:
             self._render_message(message,
                                  mine=(message.get("sender_id") == my_id))
@@ -4239,14 +4279,60 @@ class ChatPanel(tk.Frame):
             self.empty_label.pack_forget()
         else:
             self.empty_label.pack(pady=30)
-        self.after_idle(self._scroll_bottom)
+        self._unread = 0
+        self._update_unread()
+        self._schedule_scroll()
 
     def clear(self):
         self._clear_rows()
         self._messages = []
+        self._unread = 0
         self.count_label.configure(text="")
         self.empty_label.pack(pady=30)
-        self.after_idle(self._scroll_bottom)
+        self._update_unread()
+        self._schedule_scroll()
+
+    # ---------------------------------------------------------- 滚动/未读
+    def _at_bottom(self):
+        try:
+            return self._canvas.yview()[1] >= 0.99
+        except tk.TclError:
+            return True
+
+    def _update_unread(self):
+        try:
+            if self._unread > 0:
+                self.unread_label.configure(
+                    text=f"{self._unread} 条新消息 ↓")
+                self.unread_label.place(in_=self._canvas, relx=0.5, rely=1.0,
+                                        anchor="s", y=-6)
+            else:
+                self.unread_label.place_forget()
+        except tk.TclError:
+            pass
+
+    def _schedule_scroll(self):
+        if self._scroll_job is None:
+            self._scroll_job = self.after_idle(self._do_scheduled_scroll)
+
+    def _do_scheduled_scroll(self):
+        self._scroll_job = None
+        self.scroll_to_bottom()
+
+    def scroll_to_bottom(self):
+        try:
+            self._inner.update_idletasks()
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+            self._canvas.yview_moveto(1.0)
+        except tk.TclError:
+            return
+        self._unread = 0
+        self._update_unread()
+
+    def _check_bottom_after_scroll(self):
+        if self._unread and self._at_bottom():
+            self._unread = 0
+            self._update_unread()
 
     def _clear_rows(self):
         for child in self._list.winfo_children():
@@ -4275,12 +4361,35 @@ class ChatPanel(tk.Frame):
                 fill=tk.X, padx=2)
 
     # ------------------------------------------------------------ 输入
+    def show_hint(self, text):
+        """在输入框内以灰色水印显示提示, 不填入输入内容。"""
+        self._hint_text = str(text or "")
+        if self._hint_text and not self.entry_var.get().strip():
+            self.hint_label.configure(text=self._hint_text)
+            self.hint_label.place(x=10, rely=0.5, anchor="w")
+
+    def _hide_hint(self):
+        try:
+            self.hint_label.place_forget()
+        except tk.TclError:
+            pass
+
+    def _on_entry_changed(self, *_args):
+        if self.entry_var.get().strip():
+            self._hide_hint()
+        elif self._hint_text:
+            self.hint_label.configure(text=self._hint_text)
+            self.hint_label.place(x=10, rely=0.5, anchor="w")
+
     def _submit(self):
         text = self.entry_var.get().strip()
         if not text:
             return
+        self._hint_text = ""
+        self._hide_hint()
         self.entry_var.set("")
         self._on_send(text[:CHAT_MAX_CHARS])
+        self.scroll_to_bottom()
 
     # ------------------------------------------------------------ 滚动
     def _on_wheel(self, event):
@@ -4337,6 +4446,7 @@ class DanmakuOverlay(tk.Toplevel):
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self._active = []
         self._queue = []
+        self._seq = 0
         self._job = None
         self._last = None
         self._base_size = 20
@@ -4474,8 +4584,13 @@ class DanmakuOverlay(tk.Toplevel):
         text = self._queue.pop(0)
         return text, lane
 
+    def _active_limit(self):
+        return max(24, min(96, self._lane_count() * 2))
+
     def _spawn_one(self):
         if not self._queue:
+            return False
+        if len(self._active) >= self._active_limit():
             return False
         picked = self._next_item()
         if picked is None:
@@ -4484,18 +4599,19 @@ class DanmakuOverlay(tk.Toplevel):
         width = max(1, int(self._font.measure(text)))
         speed = max(40.0, self._width * self._speed / 8.0)
         y = self._lane_y(lane)
-        shadows = []
-        for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
-            shadows.append(self.canvas.create_text(
-                self._width + dx, y + dy, text=text, anchor="nw",
-                fill="#000000", font=self._font))
+        tag = f"dm{self._seq}"
+        self._seq += 1
+        # 单层描边 + 整条弹幕用 tag 一起移动, 海量弹幕时显著降低 Canvas 调用
+        self.canvas.create_text(
+            self._width + 1, y + 1, text=text, anchor="nw",
+            fill="#000000", font=self._font, tags=(tag,))
         item_id = self.canvas.create_text(
             self._width, y, text=text, anchor="nw",
-            fill=self._color, font=self._font)
+            fill=self._color, font=self._font, tags=(tag,))
         self._active.append({
             "text": text, "lane": lane, "x": float(self._width),
             "y": y, "width": width, "speed": speed,
-            "shadow": shadows, "item": item_id,
+            "tag": tag, "item": item_id,
         })
         return True
 
@@ -4528,17 +4644,12 @@ class DanmakuOverlay(tk.Toplevel):
             boost = 1.0 + min(1.2, (load - threshold) / max(1, base_lanes * 2))
         alive = []
         for item in self._active:
-            item["x"] -= item["speed"] * boost * dt
-            x = item["x"]
-            if x + item["width"] < -6:
-                for shadow in item["shadow"]:
-                    self.canvas.delete(shadow)
-                self.canvas.delete(item["item"])
+            dx = item["speed"] * boost * dt
+            item["x"] -= dx
+            if item["x"] + item["width"] < -6:
+                self.canvas.delete(item["tag"])
                 continue
-            for index, shadow in enumerate(item["shadow"]):
-                dx, dy = ((-1, -1), (1, -1), (-1, 1), (1, 1))[index]
-                self.canvas.coords(shadow, x + dx, item["y"] + dy)
-            self.canvas.coords(item["item"], x, item["y"])
+            self.canvas.move(item["tag"], -dx, 0)
             alive.append(item)
         self._active = alive
         if self._queue:
@@ -4548,9 +4659,7 @@ class DanmakuOverlay(tk.Toplevel):
     def _clear(self):
         self._queue = []
         for item in self._active:
-            for shadow in item["shadow"]:
-                self.canvas.delete(shadow)
-            self.canvas.delete(item["item"])
+            self.canvas.delete(item["tag"])
         self._active = []
         self.canvas.delete("all")
 
@@ -4714,6 +4823,7 @@ class VideoPlayerApp:
         self._secondary_windows = []
         self._secondary_job = None
         self._chat_messages = []
+        self._chat_last_sent = {}
         self._danmaku_sync_job = None
         self._danmaku_watch_job = None
         self._settings_dialog = None
@@ -5333,6 +5443,7 @@ class VideoPlayerApp:
                 self._host_handle_message(event["client_id"], event["message"])
             elif kind == "host_left":
                 log.info("客户端断开: %s", event["client_id"])
+                self._chat_last_sent.pop(event["client_id"], None)
                 if self._hosting:
                     self._broadcast_room()
                     self._rebuild_stream()
@@ -5401,6 +5512,8 @@ class VideoPlayerApp:
         self._refresh_stream_button_tooltip()
         self._sync_members_button()
         self._chat_messages = []
+        self._chat_last_sent = {}
+        self.chat_panel._max_rows = self._chat_limit()
         self.chat_panel.clear()
         self._sync_chat_panel()
         self._sync_danmaku()
@@ -5443,6 +5556,7 @@ class VideoPlayerApp:
         self._close_member_dialog()
         self._sync_members_button()
         self._chat_messages = []
+        self._chat_last_sent = {}
         self.chat_panel.clear()
         self._sync_chat_panel()
         self._sync_danmaku()
@@ -5625,7 +5739,13 @@ class VideoPlayerApp:
         elif message_type == "chat":
             text = str(message.get("text") or "").strip()
             if text:
-                self._host_add_chat(client_id, text[:CHAT_MAX_CHARS])
+                if self._chat_rate_allowed(client_id):
+                    self._host_add_chat(client_id, text[:CHAT_MAX_CHARS])
+                else:
+                    self._host_server.reply(client_id, {
+                        "v": STREAM_VERSION, "type": "chat_rejected",
+                        "reason": "rate", "message": "消息发送频率过快",
+                    })
         elif message_type == "cmd":
             self._apply_remote_command(client_id, message.get("action"),
                                        message.get("value"))
@@ -5981,6 +6101,20 @@ class VideoPlayerApp:
         else:
             self._set_status("不在房间中, 无法发送消息", "error")
 
+    def _chat_rate_allowed(self, client_id):
+        try:
+            limit = int(self.settings.get("chat_rate_limit", 1))
+        except (TypeError, ValueError):
+            limit = 1
+        if limit <= 0:
+            return True
+        now = time.monotonic()
+        last = self._chat_last_sent.get(client_id)
+        if last is not None and now - last < limit:
+            return False
+        self._chat_last_sent[client_id] = now
+        return True
+
     def _host_add_chat(self, sender_id, text):
         if self._host_server is None:
             return
@@ -6199,7 +6333,8 @@ class VideoPlayerApp:
             return
         name = str(message.get("name") or "").strip()
         text = (f"{name}：{text}" if name else text)[:DANMAKU_MAX_CHARS]
-        self._sync_danmaku()
+        if not self.danmaku._visible:
+            self._sync_danmaku()
         try:
             self.danmaku.spawn(text)
         except tk.TclError:
@@ -6263,6 +6398,7 @@ class VideoPlayerApp:
         self._refresh_stream_button_tooltip()
         self._sync_members_button()
         self._chat_messages = []
+        self.chat_panel._max_rows = self._chat_limit()
         self.chat_panel.clear()
         self._sync_chat_panel()
         self._sync_danmaku()
@@ -6533,6 +6669,10 @@ class VideoPlayerApp:
             self._refresh_stream_button_tooltip()
             self._refresh_member_dialog()
             self._watch_refresh()
+        elif message_type == "chat_rejected":
+            text = str(message.get("message") or "消息发送频率过快")
+            self.chat_panel.show_hint(text)
+            self._set_status(text, "error")
         elif message_type == "chat":
             chat = message.get("message") or {}
             self._chat_messages.append(chat)
@@ -6915,6 +7055,7 @@ class VideoPlayerApp:
         self._apply_log_level(settings.get("log_level", "INFO"))
         ANIMATIONS_ENABLED = bool(settings.get("animations", True))
         self._trim_chat_history()
+        self.chat_panel._max_rows = self._chat_limit()
         if self._hosting:
             try:
                 self.chat_panel.set_messages(self._chat_messages, "host")
