@@ -35,6 +35,10 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 
 <img src="screenshots/chat_main_host.png" width="760" alt="Room chat">
 
+**Danmaku**
+
+<img src="screenshots/danmaku_window.png" width="760" alt="Danmaku">
+
 **Theme: Violet**
 
 <img src="screenshots/theme-violet.png" width="620" alt="Violet theme">
@@ -78,6 +82,11 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - After joining, a chat panel appears on the right of the main window (WeChat-style message list with an input box)
 - The host stores all messages; guests send over the command port and only display a message after the host relays it back to everyone (including the sender)
 - New guests receive the full history; the host keeps the latest 200 messages by default (configurable in **Settings → Streaming**)
+
+### Danmaku
+- New chat messages float over the video as danmaku, right to left — works in windowed and fullscreen mode
+- Each danmaku picks a random lane; when it gets crowded messages queue up and the whole field speeds up automatically, so lanes never overlap
+- Speed scales with the video size; the master switch, size and speed live in **Settings → Streaming**
 
 ### Seeking / speed changes while streaming
 - Client seeks are never handled locally; the command is sent to the host
@@ -154,7 +163,7 @@ Open settings with the gear button at the bottom-right. There are three pages:
 
 - **General**: username, decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
 - **Appearance**: accent color, background tone, hover animations (colors apply after restart)
-- **Streaming**: max room size, chat history limit, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
+- **Streaming**: max room size, chat history limit, danmaku on/off, size, speed, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
 
 Settings are stored in `%APPDATA%\Nobplaypot\config.json`. Streaming changes apply on the next stream rebuild (client join / seek / speed change).
 

@@ -110,6 +110,7 @@ STREAM_STALE_S = 8.0
 STREAM_MAX_MSG_BYTES = 65536
 STREAM_PASSWORD_ATTEMPTS = 5
 CHAT_MAX_CHARS = 200
+DANMAKU_MAX_CHARS = 60
 
 
 def password_matches(provided, expected):
@@ -167,6 +168,9 @@ DEFAULT_SETTINGS = {
     # 流式传输
     "max_clients": 32,
     "chat_limit": 200,
+    "danmaku": True,
+    "danmaku_size": 20,
+    "danmaku_speed": 100,
     "bandwidth": 2200,          # kbps
     "resolution": "native",     # 480p / 720p / 1080p / native
     "fps": 30,
@@ -185,6 +189,8 @@ SETTINGS_RANGES = {
     "seek_step": (1, 30),
     "max_clients": (2, 32),
     "chat_limit": (20, 500),
+    "danmaku_size": (12, 36),
+    "danmaku_speed": (50, 300),
     "bandwidth": (300, 12000),
     "fps": (10, 60),
     "audio_bitrate": (64, 320),
@@ -298,7 +304,7 @@ def normalize_settings(data):
         result["preset"] = DEFAULT_SETTINGS["preset"]
     if result["log_level"] not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         result["log_level"] = DEFAULT_SETTINGS["log_level"]
-    for key in ("autoplay", "remember_dir", "animations"):
+    for key in ("autoplay", "remember_dir", "animations", "danmaku"):
         result[key] = bool(result[key])
     return result
 
@@ -3805,6 +3811,14 @@ class SettingsDialog(_StreamDialogBase):
         self._slider(row, "max_clients", 2, 32, lambda v: f"{int(round(v))} 人")
         row = self._row(page, "聊天记录上限", "主持端保存的聊天消息条数")
         self._slider(row, "chat_limit", 20, 500, lambda v: f"{int(round(v))} 条")
+        row = self._row(page, "消息弹幕", "新聊天消息以弹幕浮动在视频上")
+        self._toggle(row, "danmaku")
+        row = self._row(page, "弹幕大小", "字号, 12-36 px")
+        self._slider(row, "danmaku_size", 12, 36,
+                     lambda v: f"{int(round(v))} px")
+        row = self._row(page, "弹幕速度", "数值越大, 弹幕移动越快")
+        self._slider(row, "danmaku_speed", 50, 300,
+                     lambda v: f"{v / 100:.1f}x")
         row = self._row(page, "单客户端带宽上限", "转码目标码率, 越高越清晰也越占带宽")
         self._slider(row, "bandwidth", 300, 12000,
                      lambda v: f"{int(round(v))} kbps", width=200)
@@ -4218,6 +4232,212 @@ class ChatPanel(tk.Frame):
             pass
 
 
+class DanmakuOverlay(tk.Toplevel):
+    """透明弹幕层: 覆盖视频区, 文字从右向左飘过。"""
+
+    KEY = "#010203"
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.withdraw()
+        self.overrideredirect(True)
+        self.configure(bg=self.KEY)
+        try:
+            self.attributes("-topmost", True)
+            self.attributes("-transparentcolor", self.KEY)
+            self.attributes("-toolwindow", True)
+        except tk.TclError:
+            pass
+        self.canvas = tk.Canvas(self, bg=self.KEY, highlightthickness=0, bd=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self._active = []
+        self._queue = []
+        self._job = None
+        self._last = None
+        self._size = 20
+        self._speed = 1.0
+        self._width = 1
+        self._height = 1
+        self._lane_height = 32
+        self._font = tkfont.Font(font=ui_font(self._size, True))
+        self._visible = False
+        self._make_click_through()
+
+    # ------------------------------------------------------------ 窗口
+    def _make_click_through(self):
+        """让弹幕层不接收鼠标, 点击直接落到下面的视频/窗口。"""
+        try:
+            import ctypes
+            hwnd = self.winfo_id()
+            user32 = ctypes.windll.user32
+            gwl_exstyle = -20
+            style = user32.GetWindowLongW(hwnd, gwl_exstyle)
+            # 不要重复设置 WS_EX_LAYERED, 否则会清掉透明色键, 整个窗口变成全透明
+            user32.SetWindowLongW(
+                hwnd, gwl_exstyle,
+                style | 0x00000020 | 0x00000080 | 0x08000000)
+        except Exception:
+            pass
+
+    def set_geometry(self, x, y, width, height):
+        width = max(1, int(width))
+        height = max(1, int(height))
+        if (width, height) != (self._width, self._height):
+            self._clear()
+            self._width, self._height = width, height
+            self.canvas.configure(width=width, height=height)
+            self._font = tkfont.Font(font=ui_font(self._size, True))
+        self._lane_height = max(18, self._size + 12)
+        self.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
+        if self._visible:
+            try:
+                self.lift()
+            except tk.TclError:
+                pass
+
+    def configure_style(self, size, speed):
+        size = max(10, min(48, int(size)))
+        speed = max(0.2, min(5.0, float(speed)))
+        if size != self._size:
+            self._size = size
+            self._lane_height = max(18, self._size + 12)
+            self._font = tkfont.Font(font=ui_font(self._size, True))
+            self._clear()
+        self._speed = speed
+
+    def show(self):
+        if self._visible:
+            return
+        self._visible = True
+        self.deiconify()
+        try:
+            self.lift()
+        except tk.TclError:
+            pass
+        self._last = None
+        self._start()
+
+    def hide(self):
+        self._visible = False
+        self._clear()
+        self._stop()
+        try:
+            self.withdraw()
+        except tk.TclError:
+            pass
+
+    # ------------------------------------------------------------ 弹幕
+    def spawn(self, text):
+        if not self._visible:
+            return
+        text = str(text or "").strip()[:DANMAKU_MAX_CHARS]
+        if not text:
+            return
+        self._queue.append(text)
+        if len(self._queue) > 120:
+            self._queue.pop(0)
+
+    def _lane_count(self):
+        return max(1, int((self._height - 8) // self._lane_height))
+
+    def _lane_y(self, lane):
+        return int(lane * self._lane_height + 6)
+
+    def _lane_free(self, lane):
+        for item in reversed(self._active):
+            if item["lane"] == lane:
+                return item["x"] + item["width"] < self._width - 36
+        return True
+
+    def _next_item(self):
+        lanes = [lane for lane in range(self._lane_count()) if self._lane_free(lane)]
+        if not lanes:
+            return None
+        lane = random.choice(lanes)
+        text = self._queue.pop(0)
+        return text, lane
+
+    def _spawn_one(self):
+        if not self._queue:
+            return False
+        picked = self._next_item()
+        if picked is None:
+            return False
+        text, lane = picked
+        width = max(1, int(self._font.measure(text)))
+        speed = max(40.0, self._width * self._speed / 8.0)
+        y = self._lane_y(lane)
+        shadows = []
+        for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            shadows.append(self.canvas.create_text(
+                self._width + dx, y + dy, text=text, anchor="nw",
+                fill="#000000", font=self._font))
+        item_id = self.canvas.create_text(
+            self._width, y, text=text, anchor="nw",
+            fill="#FFFFFF", font=self._font)
+        self._active.append({
+            "text": text, "lane": lane, "x": float(self._width),
+            "y": y, "width": width, "speed": speed,
+            "shadow": shadows, "item": item_id,
+        })
+        return True
+
+    def _start(self):
+        if self._job is None:
+            self._last = None
+            self._job = self.after(16, self._tick)
+
+    def _stop(self):
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+    def _tick(self):
+        self._job = None
+        if not self._visible:
+            return
+        now = time.monotonic()
+        dt = 0.016 if self._last is None else min(0.12, now - self._last)
+        self._last = now
+        load = len(self._active) + len(self._queue)
+        base_lanes = self._lane_count()
+        # 弹幕多时整体加速, 所有弹幕同倍速, 不会追尾重叠
+        threshold = max(base_lanes, int(base_lanes * 1.2))
+        boost = 1.0
+        if load > threshold:
+            boost = 1.0 + min(1.2, (load - threshold) / max(1, base_lanes * 2))
+        alive = []
+        for item in self._active:
+            item["x"] -= item["speed"] * boost * dt
+            x = item["x"]
+            if x + item["width"] < -6:
+                for shadow in item["shadow"]:
+                    self.canvas.delete(shadow)
+                self.canvas.delete(item["item"])
+                continue
+            for index, shadow in enumerate(item["shadow"]):
+                dx, dy = ((-1, -1), (1, -1), (-1, 1), (1, 1))[index]
+                self.canvas.coords(shadow, x + dx, item["y"] + dy)
+            self.canvas.coords(item["item"], x, item["y"])
+            alive.append(item)
+        self._active = alive
+        if self._queue:
+            self._spawn_one()
+        self._job = self.after(16, self._tick)
+
+    def _clear(self):
+        self._queue = []
+        for item in self._active:
+            for shadow in item["shadow"]:
+                self.canvas.delete(shadow)
+            self.canvas.delete(item["item"])
+        self._active = []
+        self.canvas.delete("all")
+
+
 class StreamWatchView(tk.Canvas):
     """加入会话后的同步面板: 不渲染视频, 只展示同步状态。"""
 
@@ -4375,6 +4595,10 @@ class VideoPlayerApp:
         self._password_dialog = None
         self._member_dialog = None
         self._chat_messages = []
+        self._danmaku_sync_job = None
+        self._danmaku_watch_job = None
+        self._settings_dialog = None
+        self._alert_open = False
         self._sout_targets = None
         self._stream_epoch = 0
         self._last_room_count = -1
@@ -4618,11 +4842,15 @@ class VideoPlayerApp:
         self.video_frame = tk.Frame(self.content, bg=C.VIDEO, highlightthickness=0)
         self.video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.chat_panel = ChatPanel(self.content, on_send=self._send_chat)
+        self.danmaku = DanmakuOverlay(self.root)
+        self.video_frame.bind("<Configure>",
+                              lambda _e: self._schedule_danmaku_sync())
         self.drop_hint = EmptyStateView(self.video_frame, on_open=self.open_file_dialog,
                                         bg=C.VIDEO)
         self.drop_hint.pack(fill=tk.BOTH, expand=True)
         self.watch_view = StreamWatchView(self.video_frame, bg=C.VIDEO)
         self._build_fs_dock()
+        self.root.after(500, self._watch_danmaku)
 
     # ------------------------------------------------------- 全屏控制 dock
     def _build_fs_dock(self):
@@ -5025,6 +5253,7 @@ class VideoPlayerApp:
         self._chat_messages = []
         self.chat_panel.clear()
         self._sync_chat_panel()
+        self._sync_danmaku()
         log.info("开始主持流式: TCP 指令端口 %d, UDP 流端口 %d, 房间密码 %s",
                  cmd_port, udp_port, "开启" if self._host_password else "关闭")
         password_hint = " · 密码" if self._host_password else ""
@@ -5066,6 +5295,7 @@ class VideoPlayerApp:
         self._chat_messages = []
         self.chat_panel.clear()
         self._sync_chat_panel()
+        self._sync_danmaku()
         self._host_password = ""
         log.info("停止主持流式")
         self._set_status("已停止主持")
@@ -5620,6 +5850,7 @@ class VideoPlayerApp:
         self._host_server.broadcast({"v": STREAM_VERSION, "type": "chat",
                                      "message": message})
         self._append_chat_ui(message, mine=(sender_id == "host"))
+        self._spawn_danmaku(message)
 
     def _append_chat_ui(self, message, mine=False):
         try:
@@ -5635,7 +5866,97 @@ class VideoPlayerApp:
                     self.chat_panel.pack(side=tk.RIGHT, fill=tk.Y)
             else:
                 self.chat_panel.pack_forget()
+            self._schedule_danmaku_sync()
         except (tk.TclError, AttributeError):
+            pass
+
+    # ---------------------------------------------------------- 消息弹幕
+    def _app_is_foreground(self):
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            fg = user32.GetForegroundWindow()
+            if not fg:
+                return True
+            root_hwnd = user32.GetAncestor(int(self.root.winfo_id()), 2)
+            return int(fg) == int(root_hwnd)
+        except Exception:
+            return True
+
+    def _dialog_open(self):
+        for attr in ("_settings_dialog", "_member_dialog", "_password_dialog"):
+            dialog = getattr(self, attr, None)
+            if dialog is not None:
+                try:
+                    if dialog.winfo_exists():
+                        return True
+                except tk.TclError:
+                    pass
+        return bool(getattr(self, "_alert_open", False))
+
+    def _danmaku_should_show(self):
+        return (bool(self.settings.get("danmaku", True))
+                and (self._hosting or self._client_active)
+                and (self.current_path is not None or self._client_active)
+                and bool(self.root.winfo_viewable())
+                and not self._dialog_open()
+                and self._app_is_foreground())
+
+    def _sync_danmaku(self, clear=False):
+        overlay = getattr(self, "danmaku", None)
+        if overlay is None:
+            return
+        try:
+            overlay.configure_style(
+                self.settings.get("danmaku_size", 20),
+                int(self.settings.get("danmaku_speed", 100)) / 100.0)
+            if not self._danmaku_should_show():
+                overlay.hide()
+                return
+            self.video_frame.update_idletasks()
+            x = self.video_frame.winfo_rootx()
+            y = self.video_frame.winfo_rooty()
+            width = self.video_frame.winfo_width()
+            height = self.video_frame.winfo_height()
+            if width <= 2 or height <= 2:
+                overlay.hide()
+                return
+            if clear:
+                overlay._clear()
+            overlay.set_geometry(x, y, width, height)
+            overlay.show()
+        except tk.TclError:
+            pass
+
+    def _schedule_danmaku_sync(self):
+        if self._danmaku_sync_job is None:
+            self._danmaku_sync_job = self.root.after(80, self._danmaku_sync_done)
+
+    def _danmaku_sync_done(self):
+        self._danmaku_sync_job = None
+        self._sync_danmaku()
+
+    def _watch_danmaku(self):
+        self._danmaku_watch_job = None
+        if self._closing:
+            return
+        try:
+            self._sync_danmaku()
+        finally:
+            self._danmaku_watch_job = self.root.after(500, self._watch_danmaku)
+
+    def _spawn_danmaku(self, message):
+        if not self.settings.get("danmaku", True):
+            return
+        text = str(message.get("text") or "").strip()
+        if not text:
+            return
+        name = str(message.get("name") or "").strip()
+        text = (f"{name}：{text}" if name else text)[:DANMAKU_MAX_CHARS]
+        self._sync_danmaku()
+        try:
+            self.danmaku.spawn(text)
+        except tk.TclError:
             pass
 
     def _refresh_stream_button_tooltip(self):
@@ -5698,6 +6019,7 @@ class VideoPlayerApp:
         self._chat_messages = []
         self.chat_panel.clear()
         self._sync_chat_panel()
+        self._sync_danmaku()
         self.root.title(f"同步播放 — {APP_TITLE}")
         if self._client_connect():
             log.info("已连接主持 %s:%d (流接收 %s:%d)",
@@ -5744,6 +6066,7 @@ class VideoPlayerApp:
         self._chat_messages = []
         self.chat_panel.clear()
         self._sync_chat_panel()
+        self._sync_danmaku()
         self.root.title(APP_TITLE)
         speed_backup = getattr(self, "_client_speed_backup", None) or "1.0x"
         if self.speed_var.get() != speed_backup:
@@ -5909,6 +6232,7 @@ class VideoPlayerApp:
             self.player.audio_set_mute(self.mute_var.get())
             self.player.play()
             self._client_video_started = True
+            self._schedule_danmaku_sync()
             self.watch_view.pack_forget()
             log.info("客户端开始接收并渲染流: %s", url)
         except Exception:
@@ -5969,6 +6293,7 @@ class VideoPlayerApp:
             self._trim_chat_history()
             self._append_chat_ui(
                 chat, mine=(chat.get("sender_id") == self._client_id))
+            self._spawn_danmaku(chat)
         elif message_type == "chat_history":
             self._chat_messages = list(message.get("messages") or [])
             self._trim_chat_history()
@@ -6325,8 +6650,14 @@ class VideoPlayerApp:
         }
 
     def open_settings(self):
-        dialog = SettingsDialog(self.root, self.settings, self.apply_settings)
-        dialog.present()
+        self._settings_dialog = SettingsDialog(self.root, self.settings,
+                                               self.apply_settings)
+        self._sync_danmaku()
+        try:
+            self._settings_dialog.present()
+        finally:
+            self._settings_dialog = None
+            self._schedule_danmaku_sync()
 
     def apply_settings(self, settings):
         global ANIMATIONS_ENABLED
@@ -6341,6 +6672,11 @@ class VideoPlayerApp:
                 self.chat_panel.set_messages(self._chat_messages, "host")
             except tk.TclError:
                 pass
+        if self.danmaku is not None:
+            self.danmaku.configure_style(
+                settings.get("danmaku_size", 20),
+                int(settings.get("danmaku_speed", 100)) / 100.0)
+            self._sync_danmaku(clear=True)
         restart_needed = (
             settings["decode_mode"] != self._active_decode_mode
             or settings["accent"] != self._active_accent
@@ -6399,6 +6735,7 @@ class VideoPlayerApp:
         self.player.set_media(media)
 
         self.current_path = path
+        self._schedule_danmaku_sync()
         self._last_dir = os.path.dirname(os.path.abspath(path))
         if self.settings.get("remember_dir", True):
             save_config(last_dir=self._last_dir)
@@ -6659,6 +6996,7 @@ class VideoPlayerApp:
         self.deck.pack_forget()
         self.root.attributes("-fullscreen", True)
         self._sync_chat_panel()
+        self.root.after(150, self._sync_danmaku)
         self.fullscreen_button.set_icon(icon_restore)
         if self._fs_dock is not None:
             try:
@@ -6687,6 +7025,7 @@ class VideoPlayerApp:
         # 只把控制栏插回视频区之前, 不重建视频区, 避免打扰 VLC 的输出窗口
         self.deck.pack(side=tk.BOTTOM, fill=tk.X, before=self.content)
         self._sync_chat_panel()
+        self.root.after(150, self._sync_danmaku)
         self.fullscreen_button.set_icon(icon_fullscreen)
         self.root.after(60, lambda: apply_dark_titlebar(self.root))
         log.info("退出全屏 (尺寸 %s)", self.root.geometry())
@@ -6782,7 +7121,13 @@ class VideoPlayerApp:
 
     def _alert(self, title, message, kind="info"):
         log.debug("提示框[%s]: %s | %s", kind, title, message.replace("\n", " / "))
-        Alert(self.root, title, message, kind)
+        self._alert_open = True
+        self._sync_danmaku()
+        try:
+            Alert(self.root, title, message, kind)
+        finally:
+            self._alert_open = False
+            self._schedule_danmaku_sync()
 
     # --------------------------------------------------------------- close
     def _exit_watchdog(self):
@@ -6809,6 +7154,11 @@ class VideoPlayerApp:
                 pass
             self._tick_job = None
         # 先结束流式会话
+        try:
+            if self.danmaku is not None:
+                self.danmaku.hide()
+        except tk.TclError:
+            pass
         self._close_member_dialog()
         self._close_password_dialog()
         try:
