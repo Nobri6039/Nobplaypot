@@ -47,6 +47,7 @@ import math
 import os
 import platform
 import queue
+import random
 import socket
 import socketserver
 import subprocess
@@ -151,6 +152,7 @@ class C:
 # ---------------------------------------------------------------------------
 DEFAULT_SETTINGS = {
     # 常规
+    "username": "",
     "decode_mode": "auto",      # auto / hardware / software
     "volume": 80,
     "seek_step": 5,             # 快进/快退秒数
@@ -249,6 +251,28 @@ def _clamp_setting(key, value, default):
     return result
 
 
+
+def default_username():
+    """默认用户名: 计算机名; 不足 4 个字符时补随机数字, 最长 32。"""
+    try:
+        name = (socket.gethostname() or "").strip()
+    except OSError:
+        name = ""
+    if not name:
+        name = "user"
+    if len(name) < 4:
+        name += "".join(random.choice("0123456789")
+                        for _ in range(4 - len(name)))
+    return name[:32]
+
+
+def clean_username(value):
+    name = str(value or "").strip()
+    if 4 <= len(name) <= 32:
+        return name
+    return default_username()
+
+
 def normalize_settings(data):
     """把任意字典整理成合法的设置项(缺失补默认, 越界裁剪)。"""
     data = data if isinstance(data, dict) else {}
@@ -258,6 +282,7 @@ def normalize_settings(data):
         if key in SETTINGS_RANGES:
             value = _clamp_setting(key, value, default)
         result[key] = value
+    result["username"] = clean_username(result.get("username"))
     if result["decode_mode"] not in DECODE_LABELS:
         result["decode_mode"] = DEFAULT_SETTINGS["decode_mode"]
     if result["accent"] not in ACCENTS:
@@ -1784,6 +1809,25 @@ class StreamHostServer(socketserver.ThreadingTCPServer):
                 pass
             self.app.queue_net_event({"kind": "host_left", "client_id": client_id})
 
+    def kick_client(self, client_id, reason="主持将你移出房间"):
+        """把成员移出房间: 先通知对方, 再断开并触发房间更新。"""
+        with self._lock:
+            if client_id not in self._clients:
+                return False
+        self.reply(client_id, {"v": STREAM_VERSION, "type": "kicked",
+                               "reason": reason})
+        time.sleep(0.05)  # 让通知先发出去
+        self.unregister_client(client_id)
+        return True
+
+    def rename_client(self, client_id, name):
+        with self._lock:
+            entry = self._clients.get(client_id)
+            if entry is None:
+                return False
+            entry["name"] = str(name)[:32]
+        return True
+
     def reply(self, client_id, message):
         with self._lock:
             entry = self._clients.get(client_id)
@@ -2166,6 +2210,11 @@ class RoundedButton(HoverCanvas):
             "menu": {
                 "fill": None, "hover": C.SURFACE, "press": C.SURFACE,
                 "fg": C.TEXT_MUTED, "fg_hover": C.TEXT, "outline": None,
+            },
+            "danger": {
+                "fill": None, "hover": mix(C.SURFACE, C.DANGER, 0.18),
+                "press": mix(C.SURFACE, C.DANGER, 0.28),
+                "fg": C.DANGER, "fg_hover": "#FF9AA6", "outline": C.STROKE,
             },
         }
         return dict(variants.get(variant, variants["ghost"]))
@@ -3668,9 +3717,23 @@ class SettingsDialog(_StreamDialogBase):
         entry.pack(side=tk.RIGHT, ipady=6)
         return entry
 
+    def _text_entry(self, parent, key, width=18):
+        var = tk.StringVar(value=str(self._draft.get(key, "")))
+        self._vars[key] = var
+        entry = tk.Entry(parent, textvariable=var, width=width, bg=C.SURFACE,
+                         fg=C.TEXT, relief=tk.FLAT, bd=0, insertbackground=C.TEXT,
+                         highlightthickness=1, highlightbackground=C.STROKE,
+                         highlightcolor=C.ACCENT, justify=tk.LEFT,
+                         font=ui_font(10))
+        entry.pack(side=tk.RIGHT, ipady=6)
+        return entry
+
     # -------------------------------------------------------------- 页面
     def _build_general(self, page):
         self._page_title(page, "常规", "解码方式与应用行为。")
+        row = self._row(page, "用户名",
+                        "加入房间时显示的名称（4–32 个字符）")
+        self._text_entry(row, "username", width=18)
         row = self._row(page, "解码方式",
                         "硬件解码更省 CPU; 切换后需要重启软件生效。（重启生效）")
         self._dropdown(row, "decode_mode", [
@@ -3799,19 +3862,191 @@ class SettingsDialog(_StreamDialogBase):
             if isinstance(value, bool):
                 data[key] = value
             elif isinstance(value, str):
-                try:
-                    data[key] = int(value.strip())
-                except ValueError:
-                    self.show_error("端口必须是数字")
-                    return
+                if key in ("cmd_port", "udp_port"):
+                    try:
+                        data[key] = int(value.strip())
+                    except ValueError:
+                        self.show_error("端口必须是数字")
+                        return
+                else:
+                    data[key] = value.strip()
             else:
                 data[key] = value
+        username = str(data.get("username") or "").strip()
+        if not (4 <= len(username) <= 32):
+            self.show_error("用户名长度需要 4–32 个字符")
+            return
+        data["username"] = username
         validated = normalize_settings(data)
         if validated["cmd_port"] == validated["udp_port"]:
             self.show_error("指令端口和流端口不能相同")
             return
         self._on_save(validated)
         self.destroy()
+
+
+class RoomMembersDialog(tk.Toplevel):
+    """房间成员列表: 主持在最上面, 房客按加入顺序排列, 可滚动。"""
+
+    def __init__(self, master, on_kick=None, on_close=None,
+                 is_host=False, my_id=""):
+        super().__init__(master)
+        self.withdraw()
+        self.overrideredirect(True)
+        self.configure(bg=C.BG)
+        self.title("房间成员")
+        self._on_kick = on_kick
+        self._on_close = on_close
+        self._is_host = is_host
+        self._my_id = my_id
+        self._drag_offset = None
+        self._members = []
+        self._width = 440
+        self._height = 500
+
+        header = tk.Frame(self, bg=C.BG)
+        header.pack(fill=tk.X, padx=18, pady=(14, 6))
+        self.title_label = tk.Label(header, text="房间成员", bg=C.BG, fg=C.TEXT,
+                                    font=ui_font(13, True), anchor="w")
+        self.title_label.pack(side=tk.LEFT)
+        self.count_label = tk.Label(header, text="", bg=C.BG, fg=C.TEXT_DIM,
+                                    font=ui_font(9), anchor="w")
+        self.count_label.pack(side=tk.LEFT, padx=(10, 0))
+        close = RoundedButton(header, text="×", variant="ghost", width=30,
+                              height=28, radius=8, bg=C.BG, font=ui_font(12),
+                              command=self._close, tooltip="关闭")
+        close.pack(side=tk.RIGHT)
+        for widget in (header, self.title_label):
+            widget.bind("<Button-1>", self._start_drag)
+            widget.bind("<B1-Motion>", self._on_drag)
+
+        wrap = tk.Frame(self, bg=C.BG)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=18)
+        self._scrollbar = tk.Canvas(wrap, width=6, bg=C.BG,
+                                    highlightthickness=0, bd=0)
+        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(6, 0))
+        self._scrollbar.bind("<Button-1>", self._on_scrollbar)
+        self._scrollbar.bind("<B1-Motion>", self._on_scrollbar)
+        self._canvas = tk.Canvas(wrap, bg=C.BG, highlightthickness=0, bd=0,
+                                 width=380, height=360,
+                                 yscrollcommand=lambda *_a: self._update_scrollbar())
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._inner = tk.Frame(self._canvas, bg=C.BG)
+        self._window = self._canvas.create_window(
+            (0, 0), window=self._inner, anchor="nw", width=380)
+        self._inner.bind(
+            "<Configure>",
+            lambda _e: (self._canvas.configure(scrollregion=self._canvas.bbox("all")),
+                        self._update_scrollbar()))
+        self._canvas.bind(
+            "<Configure>",
+            lambda event: self._canvas.itemconfigure(self._window, width=event.width))
+        self.bind("<MouseWheel>", self._on_wheel)
+        self.bind("<Escape>", lambda _e: self._close())
+
+        footer = tk.Frame(self, bg=C.BG)
+        footer.pack(fill=tk.X, padx=18, pady=(8, 14))
+        hint = "主持可移除房客" if is_host else "仅主持可移除成员"
+        tk.Label(footer, text=hint, bg=C.BG, fg=C.TEXT_DIM, font=ui_font(8),
+                 anchor="w").pack(side=tk.LEFT)
+
+    # ------------------------------------------------------------ 显示
+    def present_async(self):
+        self.update_idletasks()
+        position_center(self, self.master, self._width, self._height)
+        self.deiconify()
+        self.lift()
+        try:
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    # ------------------------------------------------------------ 数据
+    def update_room(self, members):
+        self._members = list(members or [])
+        self.count_label.configure(text=f"共 {len(self._members)} 人")
+        for child in self._inner.winfo_children():
+            child.destroy()
+        for index, member in enumerate(self._members):
+            self._build_row(index, member)
+        self._inner.update_idletasks()
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        self._update_scrollbar()
+
+    def _build_row(self, index, member):
+        row = tk.Frame(self._inner, bg=C.BG)
+        row.pack(fill=tk.X, pady=(0, 4))
+        line = tk.Frame(row, bg=C.SURFACE, padx=12, pady=8)
+        line.pack(fill=tk.X)
+        tk.Label(line, text=f"{index + 1:02d}", bg=C.SURFACE, fg=C.TEXT_DIM,
+                 font=mono_font(9), width=3, anchor="w").pack(side=tk.LEFT)
+        tk.Label(line, text=member.get("name") or "?", bg=C.SURFACE, fg=C.TEXT,
+                 font=ui_font(10), anchor="w").pack(side=tk.LEFT, padx=(6, 8))
+        if member.get("host"):
+            tk.Label(line, text="主持", bg=C.ACCENT_SOFT, fg=C.ACCENT,
+                     font=ui_font(8), padx=6, pady=1).pack(side=tk.LEFT)
+        elif member.get("id") == self._my_id:
+            tk.Label(line, text="我", bg=C.SURFACE_HI, fg=C.TEXT_MUTED,
+                     font=ui_font(8), padx=6, pady=1).pack(side=tk.LEFT)
+        if (self._is_host and not member.get("host")
+                and member.get("id") != "host"):
+            RoundedButton(
+                line, text="踢出", variant="danger", width=52, height=26,
+                radius=7, bg=C.SURFACE, font=ui_font(8),
+                command=lambda cid=member.get("id"): self._kick(cid),
+            ).pack(side=tk.RIGHT)
+
+    def _kick(self, client_id):
+        if client_id and self._on_kick is not None:
+            self._on_kick(client_id)
+
+    # ------------------------------------------------------------ 滚动
+    def _on_wheel(self, event):
+        try:
+            self._canvas.yview_scroll(int(-event.delta / 120), "units")
+        except tk.TclError:
+            pass
+
+    def _on_scrollbar(self, event):
+        height = self._scrollbar.winfo_height() or 1
+        self._canvas.yview_moveto(max(0.0, min(1.0, event.y / height)))
+
+    def _update_scrollbar(self):
+        bar = self._scrollbar
+        try:
+            bar.delete("all")
+            total = float(self._inner.winfo_height() or 0)
+            view = float(self._canvas.winfo_height() or 0)
+            if total <= view + 2:
+                return
+            first, last = self._canvas.yview()
+            height = bar.winfo_height() or 1
+            y0 = int(first * height)
+            y1 = max(y0 + 24, int(last * height))
+            draw_round_rect(bar, 1, y0, 5, min(y1, height), 2,
+                            fill=C.STROKE_SOFT)
+        except tk.TclError:
+            pass
+
+    # ------------------------------------------------------------ 拖动/关闭
+    def _start_drag(self, event):
+        self._drag_offset = (event.x_root - self.winfo_x(),
+                             event.y_root - self.winfo_y())
+
+    def _on_drag(self, event):
+        if self._drag_offset is None:
+            return
+        x = event.x_root - self._drag_offset[0]
+        y = event.y_root - self._drag_offset[1]
+        self.geometry(f"+{x}+{y}")
+
+    def _close(self):
+        if self._on_close is not None:
+            self._on_close()
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
 
 
 class StreamWatchView(tk.Canvas):
@@ -3893,6 +4128,7 @@ class VideoPlayerApp:
         self._active_surface = self.settings["surface"]
         self._active_decode_mode = self.settings["decode_mode"]
         self._active_volume = int(self.settings["volume"])
+        self._active_username = self.settings["username"]
         self.seek_step_ms = int(self.settings["seek_step"]) * 1000
         self._apply_log_level(self.settings.get("log_level", "INFO"))
         self.root.title(APP_TITLE)
@@ -3968,6 +4204,7 @@ class VideoPlayerApp:
         self._host_password = ""
         self._client_password = None
         self._password_dialog = None
+        self._member_dialog = None
         self._sout_targets = None
         self._stream_epoch = 0
         self._last_room_count = -1
@@ -4111,6 +4348,11 @@ class VideoPlayerApp:
             tooltip="流式传输 (主持 / 加入)",
         )
         self.stream_button.pack(side=tk.LEFT)
+
+        self.members_button = RoundedButton(
+            left, text="房间成员", variant="ghost", width=96, height=36, radius=9,
+            bg=C.DECK, command=self.open_members, tooltip="查看房间成员",
+        )
 
         self.open_button = RoundedButton(
             left, text="打开文件", variant="ghost", width=112, height=36, radius=9,
@@ -4606,6 +4848,7 @@ class VideoPlayerApp:
                          name=f"host-monitor-{cmd_port}").start()
         self.stream_button.set_active(True)
         self._refresh_stream_button_tooltip()
+        self._sync_members_button()
         log.info("开始主持流式: TCP 指令端口 %d, UDP 流端口 %d, 房间密码 %s",
                  cmd_port, udp_port, "开启" if self._host_password else "关闭")
         password_hint = " · 密码" if self._host_password else ""
@@ -4642,6 +4885,8 @@ class VideoPlayerApp:
                 pass
         self.stream_button.set_active(False)
         self._refresh_stream_button_tooltip()
+        self._close_member_dialog()
+        self._sync_members_button()
         self._host_password = ""
         log.info("停止主持流式")
         self._set_status("已停止主持")
@@ -4780,12 +5025,8 @@ class VideoPlayerApp:
             if purged:
                 log.info("心跳超时清理客户端: %s", purged)
 
-    @staticmethod
-    def _host_name():
-        try:
-            return socket.gethostname() or "主持"
-        except OSError:
-            return "主持"
+    def _host_name(self):
+        return str(self.settings.get("username") or default_username())[:32]
 
     def _host_handle_message(self, client_id, message):
         if self._host_server is None:
@@ -4813,6 +5054,11 @@ class VideoPlayerApp:
             self._rebuild_stream()
             self._host_server.reply(client_id, self._state_message())
             self._set_status(f"客户端接入 · 房间 {self._room_count()} 人", "playing")
+        elif message_type == "rename":
+            name = str(message.get("name") or "").strip()[:32]
+            if 4 <= len(name) <= 32 and self._host_server.rename_client(client_id, name):
+                log.info("成员改名: %s (%s)", name, client_id)
+                self._broadcast_room()
         elif message_type == "cmd":
             self._apply_remote_command(client_id, message.get("action"),
                                        message.get("value"))
@@ -5045,11 +5291,18 @@ class VideoPlayerApp:
 
     def _room_message(self):
         members = self._host_server.snapshot() if self._host_server is not None else []
+        host_name = self._host_name()
+        entries = [{"id": "host", "name": host_name, "host": True}]
+        entries += [
+            {"id": m["id"], "name": m.get("name") or f"客户端-{m['id']}",
+             "host": False}
+            for m in members
+        ]
         return {
             "v": STREAM_VERSION, "type": "room",
-            "host": self._host_name(),
-            "count": len(members) + 1,
-            "members": members,
+            "host": host_name,
+            "count": len(entries),
+            "members": entries,
         }
 
     def _broadcast_room(self):
@@ -5060,6 +5313,79 @@ class VideoPlayerApp:
             self._last_room_count = count
             self._refresh_stream_button_tooltip()
         self._host_server.broadcast(self._room_message())
+        self._refresh_member_dialog()
+
+    def _kick_member(self, client_id):
+        """主持端: 把某个房客移出房间。"""
+        if not self._hosting or self._host_server is None or client_id == "host":
+            return
+        names = {m["id"]: m["name"] for m in self._room_message()["members"]}
+        name = names.get(client_id, "成员")
+        if self._host_server.kick_client(client_id):
+            log.info("已移出成员: %s (%s)", name, client_id)
+            self._set_status(f"已移出 {name}", "ok")
+            self._broadcast_room()
+            self._rebuild_stream()
+
+    # ---------------------------------------------------------- 房间成员窗
+    def open_members(self):
+        if not (self._hosting or self._client_active):
+            return
+        if self._member_dialog is not None:
+            try:
+                if self._member_dialog.winfo_exists():
+                    self._refresh_member_dialog()
+                    self._member_dialog.lift()
+                    self._member_dialog.focus_force()
+                    return
+            except tk.TclError:
+                pass
+            self._member_dialog = None
+        self._member_dialog = RoomMembersDialog(
+            self.root,
+            on_kick=self._kick_member,
+            on_close=self._member_dialog_closed,
+            is_host=self._hosting,
+            my_id="host" if self._hosting else (self._client_id or ""),
+        )
+        self._refresh_member_dialog()
+        self._member_dialog.present_async()
+
+    def _member_dialog_closed(self):
+        self._member_dialog = None
+
+    def _close_member_dialog(self):
+        dialog = self._member_dialog
+        self._member_dialog = None
+        if dialog is not None:
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+
+    def _refresh_member_dialog(self):
+        dialog = self._member_dialog
+        if dialog is None:
+            return
+        try:
+            if not dialog.winfo_exists():
+                self._member_dialog = None
+                return
+            data = self._room_message() if self._hosting else (self._client_room or {})
+            dialog.update_room(data.get("members") or [])
+        except tk.TclError:
+            self._member_dialog = None
+
+    def _sync_members_button(self):
+        try:
+            if self._hosting or self._client_active:
+                if not self.members_button.winfo_ismapped():
+                    self.members_button.pack(side=tk.LEFT, padx=(8, 0),
+                                             before=self.open_button)
+            else:
+                self.members_button.pack_forget()
+        except (tk.TclError, AttributeError):
+            pass
 
     def _refresh_stream_button_tooltip(self):
         tooltip = getattr(self.stream_button, "_tooltip", None)
@@ -5117,6 +5443,7 @@ class VideoPlayerApp:
         self.stream_button.set_active(True)
         self.open_button.set_enabled(False)
         self._refresh_stream_button_tooltip()
+        self._sync_members_button()
         self.root.title(f"同步播放 — {APP_TITLE}")
         if self._client_connect():
             log.info("已连接主持 %s:%d (流接收 %s:%d)",
@@ -5158,6 +5485,8 @@ class VideoPlayerApp:
         self.stream_button.set_active(False)
         self.open_button.set_enabled(True)
         self._refresh_stream_button_tooltip()
+        self._close_member_dialog()
+        self._sync_members_button()
         self.root.title(APP_TITLE)
         speed_backup = getattr(self, "_client_speed_backup", None) or "1.0x"
         if self.speed_var.get() != speed_backup:
@@ -5375,7 +5704,14 @@ class VideoPlayerApp:
         elif message_type == "room":
             self._client_room = message
             self._refresh_stream_button_tooltip()
+            self._refresh_member_dialog()
             self._watch_refresh()
+        elif message_type == "kicked":
+            reason = str(message.get("reason") or "你已被主持移出房间")
+            log.info("被主持移出房间: %s", reason)
+            self._close_member_dialog()
+            self.leave_stream()
+            self._alert("已离开房间", reason)
         elif message_type == "pong":
             pass
         elif message_type == "bye":
@@ -5741,6 +6077,14 @@ class VideoPlayerApp:
             self.volume_var.set(self._active_volume)
             self.volume_label.configure(text=f"{self._active_volume}%")
             self._apply_volume()
+        if settings.get("username") != self._active_username:
+            self._active_username = settings.get("username", "")
+            if self._hosting:
+                self._broadcast_room()
+                self._refresh_stream_button_tooltip()
+            elif self._client_active:
+                self._client_send({"v": STREAM_VERSION, "type": "rename",
+                                   "name": self._active_username})
         if restart_needed:
             self._set_status("设置已保存 · 外观/解码设置重启后生效", "ok")
         else:
@@ -6189,6 +6533,7 @@ class VideoPlayerApp:
                 pass
             self._tick_job = None
         # 先结束流式会话
+        self._close_member_dialog()
         self._close_password_dialog()
         try:
             if self._hosting:

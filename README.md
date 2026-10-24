@@ -27,6 +27,10 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 <img src="screenshots/room-password.png" width="260" alt="Client password prompt">
 </p>
 
+**Room members**
+
+<img src="screenshots/room_members_host.png" width="420" alt="Room members">
+
 **Theme: Violet**
 
 <img src="screenshots/theme-violet.png" width="620" alt="Violet theme">
@@ -60,6 +64,11 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - The host can enable a password when starting (on by default); the password stays on the host only
 - When the room is protected, the client is prompted for the password, which is **verified by the host** before the client actually joins
 - Constant-time comparison, at most 5 attempts per connection, and the password is never sent to other clients
+
+### Room members
+- Every end — host or guest — can set a display name in **Settings → General** (defaults to the computer name, 4–32 characters)
+- After joining, a **Room members** button appears on the main window
+- The list puts the host first and then guests in join order; it is scrollable (up to 32 people), and the host can remove a guest with the **Kick** button
 
 ### Seeking / speed changes while streaming
 - Client seeks are never handled locally; the command is sent to the host
@@ -134,7 +143,7 @@ No Python or VLC installation is required for the portable release. The bundled 
 ### Settings
 Open settings with the gear button at the bottom-right. There are three pages:
 
-- **General**: decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
+- **General**: username, decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
 - **Appearance**: accent color, background tone, hover animations (colors apply after restart)
 - **Streaming**: max room size, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
 
