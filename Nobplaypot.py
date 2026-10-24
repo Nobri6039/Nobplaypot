@@ -5975,6 +5975,31 @@ class VideoPlayerApp:
         except Exception:
             return True
 
+    def _app_visible_at_video(self):
+        """窗口没在前台时, 只要视频区域在屏幕上可见也显示弹幕。"""
+        if self._fullscreen:
+            return True
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            root_hwnd = user32.GetAncestor(int(self.root.winfo_id()), 2)
+            if not root_hwnd:
+                return True
+            self.video_frame.update_idletasks()
+            vx = self.video_frame.winfo_rootx()
+            vy = self.video_frame.winfo_rooty()
+            vw = max(1, self.video_frame.winfo_width())
+            vh = max(1, self.video_frame.winfo_height())
+            for fx, fy in ((0.5, 0.5), (0.25, 0.25), (0.75, 0.3), (0.5, 0.8)):
+                point = wintypes.POINT(int(vx + vw * fx), int(vy + vh * fy))
+                hwnd = user32.WindowFromPoint(point)
+                if hwnd and user32.GetAncestor(hwnd, 2) == root_hwnd:
+                    return True
+            return False
+        except Exception:
+            return True
+
     def _dialog_open(self):
         for attr in ("_settings_dialog", "_member_dialog", "_password_dialog"):
             dialog = getattr(self, attr, None)
@@ -5992,7 +6017,8 @@ class VideoPlayerApp:
                 and (self.current_path is not None or self._client_active)
                 and bool(self.root.winfo_viewable())
                 and not self._dialog_open()
-                and (self._fullscreen or self._app_is_foreground()))
+                and (self._fullscreen or self._app_is_foreground()
+                     or self._app_visible_at_video()))
 
     def _sync_danmaku(self, clear=False):
         overlay = getattr(self, "danmaku", None)
