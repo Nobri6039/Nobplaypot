@@ -39,6 +39,10 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 
 <img src="screenshots/danmaku_window.png" width="760" alt="Danmaku">
 
+**Chat room settings**
+
+<img src="screenshots/settings_tab_chat.png" width="620" alt="Chat room settings">
+
 **Theme: Violet**
 
 <img src="screenshots/theme-violet.png" width="620" alt="Violet theme">
@@ -74,19 +78,19 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - Constant-time comparison, at most 5 attempts per connection, and the password is never sent to other clients
 
 ### Room members
-- Every end — host or guest — can set a display name in **Settings → General** (defaults to the computer name, 4–32 characters)
+- Every end — host or guest — can set a display name in **Settings → Chat room** (defaults to the computer name, 4–32 characters)
 - After joining, a **Room members** button appears on the main window
 - The list puts the host first and then guests in join order; it is scrollable (up to 32 people), and the host can remove a guest with the **Kick** button
 
 ### Room chat
 - After joining, a chat panel appears on the right of the main window (WeChat-style message list with an input box)
 - The host stores all messages; guests send over the command port and only display a message after the host relays it back to everyone (including the sender)
-- New guests receive the full history; the host keeps the latest 200 messages by default (configurable in **Settings → Streaming**)
+- New guests receive the full history; the host keeps the latest 200 messages by default (configurable in **Settings → Chat room**)
 
 ### Danmaku
 - New chat messages float over the video as danmaku, right to left — works in windowed and fullscreen mode
 - Each danmaku picks a random lane; when it gets crowded messages queue up and the whole field speeds up automatically, so lanes never overlap
-- Speed scales with the video size; the master switch, size and speed live in **Settings → Streaming**
+- Size scales with the video area; the master switch, size, speed, color and area live in **Settings → Chat room**
 
 ### Seeking / speed changes while streaming
 - Client seeks are never handled locally; the command is sent to the host
@@ -159,11 +163,12 @@ No Python or VLC installation is required for the portable release. The bundled 
 > LAN is the easiest setup. For the internet, forward the TCP command port and the UDP stream port on the host's router and allow them through the firewall; UDP packet loss over the internet also affects playback quality.
 
 ### Settings
-Open settings with the gear button at the bottom-right. There are three pages:
+Open settings with the gear button at the bottom-right. There are four pages:
 
-- **General**: username, decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
+- **General**: decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
 - **Appearance**: accent color, background tone, hover animations (colors apply after restart)
-- **Streaming**: max room size, chat history limit, danmaku on/off, size, speed, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
+- **Chat room**: username, chat history limit, danmaku on/off, size, speed, color, area
+- **Streaming**: max room size, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
 
 Settings are stored in `%APPDATA%\Nobplaypot\config.json`. Streaming changes apply on the next stream rebuild (client join / seek / speed change).
 
@@ -210,10 +215,8 @@ Nobplaypot/
 ## Roadmap
 
 1. UUID-based identity
-2. In-room chat
-3. Danmaku (bullet comments) for chat messages
-4. Expand to more system platforms
-5. Smoother sync and more feature extensions
+2. Expand to more system platforms
+3. Smoother sync and more feature extensions
 
 ## Acknowledgements
 

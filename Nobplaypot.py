@@ -152,6 +152,25 @@ class C:
 # ---------------------------------------------------------------------------
 # 设置: 默认值 / 外观主题 / 读写
 # ---------------------------------------------------------------------------
+DANMAKU_COLORS = {
+    "white": ("白色", "#FFFFFF"),
+    "yellow": ("黄色", "#FFE45C"),
+    "cyan": ("青色", "#6FF2FF"),
+    "pink": ("粉色", "#FF9BCE"),
+    "green": ("绿色", "#8CFFB0"),
+    "orange": ("橙色", "#FFB86B"),
+    "blue": ("蓝色", "#8FB8FF"),
+    "violet": ("紫色", "#C9A7FF"),
+}
+
+DANMAKU_AREAS = (
+    (100, "全屏"),
+    (50, "上方 50%"),
+    (40, "上方 40%"),
+    (30, "上方 30%"),
+    (20, "上方 20%"),
+)
+
 DEFAULT_SETTINGS = {
     # 常规
     "username": "",
@@ -171,6 +190,8 @@ DEFAULT_SETTINGS = {
     "danmaku": True,
     "danmaku_size": 20,
     "danmaku_speed": 100,
+    "danmaku_color": "white",
+    "danmaku_area": 100,
     "bandwidth": 2200,          # kbps
     "resolution": "native",     # 480p / 720p / 1080p / native
     "fps": 30,
@@ -304,6 +325,15 @@ def normalize_settings(data):
         result["preset"] = DEFAULT_SETTINGS["preset"]
     if result["log_level"] not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         result["log_level"] = DEFAULT_SETTINGS["log_level"]
+    if result.get("danmaku_color") not in DANMAKU_COLORS:
+        result["danmaku_color"] = DEFAULT_SETTINGS["danmaku_color"]
+    try:
+        area = int(result.get("danmaku_area", 100))
+    except (TypeError, ValueError):
+        area = 100
+    if area not in [value for value, _label in DANMAKU_AREAS]:
+        area = 100
+    result["danmaku_area"] = area
     for key in ("autoplay", "remember_dir", "animations", "danmaku"):
         result[key] = bool(result[key])
     return result
@@ -3511,7 +3541,8 @@ class ToggleSwitch(tk.Canvas):
 class SettingsDialog(_StreamDialogBase):
     """设置窗口: 左侧选项卡 + 右侧滚动内容。"""
 
-    PAGES = (("general", "常规"), ("appearance", "外观"), ("streaming", "流式传输"))
+    PAGES = (("general", "常规"), ("appearance", "外观"),
+             ("chat", "聊天室"), ("streaming", "流式传输"))
 
     def __init__(self, master, settings, on_save):
         super().__init__(master, "设置", width=860)
@@ -3570,13 +3601,13 @@ class SettingsDialog(_StreamDialogBase):
         )
         self._page_host.bind(
             "<Configure>",
-            lambda _e: (self._scroll.configure(scrollregion=self._scroll.bbox("all")),
-                        self._update_scrollbar()),
+            lambda _e: self._refresh_scrollregion(),
         )
         self._scroll.bind(
             "<Configure>",
-            lambda event: (self._scroll.itemconfigure(self._page_window, width=event.width),
-                           self._update_scrollbar()),
+            lambda event: (self._scroll.itemconfigure(self._page_window,
+                                                      width=event.width),
+                           self._refresh_scrollregion()),
         )
         self.bind("<MouseWheel>", self._on_wheel)
 
@@ -3617,13 +3648,29 @@ class SettingsDialog(_StreamDialogBase):
     # ---------------------------------------------------------- 构建辅助
     def _on_wheel(self, event):
         try:
+            if self._page_host.winfo_height() <= self._scroll.winfo_height() + 2:
+                self._scroll.yview_moveto(0)
+                return
             self._scroll.yview_scroll(int(-event.delta / 120), "units")
         except tk.TclError:
             pass
 
     def _on_scrollbar(self, event):
+        if self._page_host.winfo_height() <= self._scroll.winfo_height() + 2:
+            return
         height = self._scrollbar.winfo_height() or 1
         self._scroll.yview_moveto(max(0.0, min(1.0, event.y / height)))
+
+    def _refresh_scrollregion(self):
+        try:
+            width = max(1, self._scroll.winfo_width())
+            content = max(1, self._page_host.winfo_height())
+            view = max(1, self._scroll.winfo_height())
+            self._scroll.configure(
+                scrollregion=(0, 0, width, max(content, view)))
+            self._update_scrollbar()
+        except tk.TclError:
+            pass
 
     def _update_scrollbar(self):
         bar = self._scrollbar
@@ -3649,13 +3696,13 @@ class SettingsDialog(_StreamDialogBase):
         builder = {
             "general": self._build_general,
             "appearance": self._build_appearance,
+            "chat": self._build_chat,
             "streaming": self._build_streaming,
         }[key]
         builder(self._page_host)
         self._page_host.update_idletasks()
-        self._scroll.configure(scrollregion=self._scroll.bbox("all"))
+        self._refresh_scrollregion()
         self._scroll.yview_moveto(0)
-        self._update_scrollbar()
 
     def _page_title(self, page, title, subtitle):
         tk.Label(page, text=title, bg=C.BG, fg=C.TEXT, font=ui_font(12, True),
@@ -3740,9 +3787,6 @@ class SettingsDialog(_StreamDialogBase):
     # -------------------------------------------------------------- 页面
     def _build_general(self, page):
         self._page_title(page, "常规", "解码方式与应用行为。")
-        row = self._row(page, "用户名",
-                        "加入房间时显示的名称（4–32 个字符）")
-        self._text_entry(row, "username", width=18)
         row = self._row(page, "解码方式",
                         "硬件解码更省 CPU; 切换后需要重启软件生效。（重启生效）")
         self._dropdown(row, "decode_mode", [
@@ -3804,21 +3848,35 @@ class SettingsDialog(_StreamDialogBase):
         row = self._row(page, "悬停动画", "关闭后按钮与滑块的悬停变化直接切换")
         self._toggle(row, "animations")
 
-    def _build_streaming(self, page):
-        self._page_title(page, "流式传输",
-                         "主持端推流参数; 修改后在下次重建推流（客户端加入/换片）时生效。")
-        row = self._row(page, "房间人数上限", "包括主持自己, 2-32 人")
-        self._slider(row, "max_clients", 2, 32, lambda v: f"{int(round(v))} 人")
+    def _build_chat(self, page):
+        self._page_title(page, "聊天室", "用户名、聊天记录与弹幕显示。")
+        row = self._row(page, "用户名",
+                        "加入房间时显示的名称（4–32 个字符）")
+        self._text_entry(row, "username", width=18)
         row = self._row(page, "聊天记录上限", "主持端保存的聊天消息条数")
         self._slider(row, "chat_limit", 20, 500, lambda v: f"{int(round(v))} 条")
         row = self._row(page, "消息弹幕", "新聊天消息以弹幕浮动在视频上")
         self._toggle(row, "danmaku")
-        row = self._row(page, "弹幕大小", "字号, 12-36 px")
+        row = self._row(page, "弹幕大小", "基础字号, 会随视频尺寸自动缩放")
         self._slider(row, "danmaku_size", 12, 36,
                      lambda v: f"{int(round(v))} px")
         row = self._row(page, "弹幕速度", "数值越大, 弹幕移动越快")
         self._slider(row, "danmaku_speed", 50, 300,
                      lambda v: f"{v / 100:.1f}x")
+        row = self._row(page, "弹幕颜色", "")
+        self._dropdown(row, "danmaku_color", [
+            (key, label) for key, (label, _color) in DANMAKU_COLORS.items()
+        ])
+        row = self._row(page, "弹幕区域", "弹幕只出现在视频上方的区域")
+        self._dropdown(row, "danmaku_area", [
+            (value, label) for value, label in DANMAKU_AREAS
+        ])
+
+    def _build_streaming(self, page):
+        self._page_title(page, "流式传输",
+                         "主持端推流参数; 修改后在下次重建推流（客户端加入/换片）时生效。")
+        row = self._row(page, "房间人数上限", "包括主持自己, 2-32 人")
+        self._slider(row, "max_clients", 2, 32, lambda v: f"{int(round(v))} 人")
         row = self._row(page, "单客户端带宽上限", "转码目标码率, 越高越清晰也越占带宽")
         self._slider(row, "bandwidth", 300, 12000,
                      lambda v: f"{int(round(v))} kbps", width=200)
@@ -4254,8 +4312,12 @@ class DanmakuOverlay(tk.Toplevel):
         self._queue = []
         self._job = None
         self._last = None
+        self._base_size = 20
         self._size = 20
+        self._scale = 1.0
         self._speed = 1.0
+        self._color = "#FFFFFF"
+        self._area = 100
         self._width = 1
         self._height = 1
         self._lane_height = 32
@@ -4282,29 +4344,55 @@ class DanmakuOverlay(tk.Toplevel):
     def set_geometry(self, x, y, width, height):
         width = max(1, int(width))
         height = max(1, int(height))
-        size_changed = (width, height) != (self._width, self._height)
-        if size_changed:
-            self._clear()
+        resized = (width, height) != (self._width, self._height)
+        if resized:
             self._width, self._height = width, height
             self.canvas.configure(width=width, height=height)
-            self._font = tkfont.Font(font=ui_font(self._size, True))
+        old_size = self._size
+        self._recalc_font()
+        if resized or self._size != old_size:
+            self._clear()
         self._lane_height = max(18, self._size + 12)
         self.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
-        if size_changed and self._visible:
+        if (resized or self._size != old_size) and self._visible:
             try:
                 self.lift()
             except tk.TclError:
                 pass
 
-    def configure_style(self, size, speed):
-        size = max(10, min(48, int(size)))
+    def _recalc_font(self):
+        # 弹幕字号随视频高度缩放: 窗口和全屏视觉大小一致
+        scale = max(0.8, min(2.8, self._height / 600.0)) if self._height > 1 else 1.0
+        self._scale = scale
+        actual = max(9, min(96, int(round(self._base_size * scale))))
+        if actual != self._size:
+            self._size = actual
+            self._lane_height = max(18, actual + 12)
+            self._font = tkfont.Font(font=ui_font(actual, True))
+
+    def configure_style(self, size, speed, color="#FFFFFF", area=100):
+        base_size = max(10, min(48, int(size)))
         speed = max(0.2, min(5.0, float(speed)))
-        if size != self._size:
-            self._size = size
-            self._lane_height = max(18, self._size + 12)
-            self._font = tkfont.Font(font=ui_font(self._size, True))
-            self._clear()
+        try:
+            area = int(area)
+        except (TypeError, ValueError):
+            area = 100
+        if area not in (100, 50, 40, 30, 20):
+            area = 100
+        color = str(color or "#FFFFFF")
+        base_changed = base_size != self._base_size
+        area_changed = area != self._area
+        color_changed = color != self._color
+        self._base_size = base_size
         self._speed = speed
+        self._color = color
+        self._area = area
+        if base_changed or area_changed:
+            self._recalc_font()
+            self._clear()
+        elif color_changed:
+            for item in self._active:
+                self.canvas.itemconfigure(item["item"], fill=self._color)
 
     def show(self):
         if self._visible:
@@ -4339,7 +4427,8 @@ class DanmakuOverlay(tk.Toplevel):
             self._queue.pop(0)
 
     def _lane_count(self):
-        return max(1, int((self._height - 8) // self._lane_height))
+        visible = self._height * self._area / 100.0
+        return max(1, int((visible - 8) // self._lane_height))
 
     def _lane_y(self, lane):
         return int(lane * self._lane_height + 6)
@@ -4375,7 +4464,7 @@ class DanmakuOverlay(tk.Toplevel):
                 fill="#000000", font=self._font))
         item_id = self.canvas.create_text(
             self._width, y, text=text, anchor="nw",
-            fill="#FFFFFF", font=self._font)
+            fill=self._color, font=self._font)
         self._active.append({
             "text": text, "lane": lane, "x": float(self._width),
             "y": y, "width": width, "speed": speed,
@@ -5903,16 +5992,20 @@ class VideoPlayerApp:
                 and (self.current_path is not None or self._client_active)
                 and bool(self.root.winfo_viewable())
                 and not self._dialog_open()
-                and self._app_is_foreground())
+                and (self._fullscreen or self._app_is_foreground()))
 
     def _sync_danmaku(self, clear=False):
         overlay = getattr(self, "danmaku", None)
         if overlay is None:
             return
         try:
+            color = DANMAKU_COLORS.get(
+                self.settings.get("danmaku_color", "white"),
+                ("", "#FFFFFF"))[1]
             overlay.configure_style(
                 self.settings.get("danmaku_size", 20),
-                int(self.settings.get("danmaku_speed", 100)) / 100.0)
+                int(self.settings.get("danmaku_speed", 100)) / 100.0,
+                color, self.settings.get("danmaku_area", 100))
             if not self._danmaku_should_show():
                 overlay.hide()
                 return
@@ -6676,9 +6769,12 @@ class VideoPlayerApp:
             except tk.TclError:
                 pass
         if self.danmaku is not None:
+            color = DANMAKU_COLORS.get(
+                settings.get("danmaku_color", "white"), ("", "#FFFFFF"))[1]
             self.danmaku.configure_style(
                 settings.get("danmaku_size", 20),
-                int(settings.get("danmaku_speed", 100)) / 100.0)
+                int(settings.get("danmaku_speed", 100)) / 100.0,
+                color, settings.get("danmaku_area", 100))
             self._sync_danmaku(clear=True)
         restart_needed = (
             settings["decode_mode"] != self._active_decode_mode
