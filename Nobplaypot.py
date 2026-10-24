@@ -109,6 +109,7 @@ STREAM_HEARTBEAT_S = 2.0
 STREAM_STALE_S = 8.0
 STREAM_MAX_MSG_BYTES = 65536
 STREAM_PASSWORD_ATTEMPTS = 5
+CHAT_MAX_CHARS = 200
 
 
 def password_matches(provided, expected):
@@ -165,6 +166,7 @@ DEFAULT_SETTINGS = {
     "animations": True,
     # 流式传输
     "max_clients": 32,
+    "chat_limit": 200,
     "bandwidth": 2200,          # kbps
     "resolution": "native",     # 480p / 720p / 1080p / native
     "fps": 30,
@@ -182,6 +184,7 @@ SETTINGS_RANGES = {
     "volume": (0, 100),
     "seek_step": (1, 30),
     "max_clients": (2, 32),
+    "chat_limit": (20, 500),
     "bandwidth": (300, 12000),
     "fps": (10, 60),
     "audio_bitrate": (64, 320),
@@ -3800,6 +3803,8 @@ class SettingsDialog(_StreamDialogBase):
                          "主持端推流参数; 修改后在下次重建推流（客户端加入/换片）时生效。")
         row = self._row(page, "房间人数上限", "包括主持自己, 2-32 人")
         self._slider(row, "max_clients", 2, 32, lambda v: f"{int(round(v))} 人")
+        row = self._row(page, "聊天记录上限", "主持端保存的聊天消息条数")
+        self._slider(row, "chat_limit", 20, 500, lambda v: f"{int(round(v))} 条")
         row = self._row(page, "单客户端带宽上限", "转码目标码率, 越高越清晰也越占带宽")
         self._slider(row, "bandwidth", 300, 12000,
                      lambda v: f"{int(round(v))} kbps", width=200)
@@ -4049,6 +4054,170 @@ class RoomMembersDialog(tk.Toplevel):
             pass
 
 
+class ChatPanel(tk.Frame):
+    """主窗口右侧聊天面板: 上方消息列表, 下方输入框。"""
+
+    WIDTH = 340
+
+    def __init__(self, master, on_send):
+        super().__init__(master, bg=C.BG, width=self.WIDTH,
+                         highlightthickness=0, bd=0)
+        self.pack_propagate(False)
+        self._on_send = on_send
+        self._messages = []
+
+        header = tk.Frame(self, bg=C.BG)
+        header.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
+        tk.Label(header, text="房间聊天", bg=C.BG, fg=C.TEXT,
+                 font=ui_font(12, True), anchor="w").pack(side=tk.LEFT)
+        self.count_label = tk.Label(header, text="", bg=C.BG, fg=C.TEXT_DIM,
+                                    font=ui_font(8), anchor="w")
+        self.count_label.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Frame(self, bg=C.STROKE, height=1).pack(side=tk.TOP, fill=tk.X)
+
+        input_bar = tk.Frame(self, bg=C.BG, padx=12, pady=10)
+        input_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Frame(self, bg=C.STROKE, height=1).pack(side=tk.BOTTOM, fill=tk.X)
+        self.entry_var = tk.StringVar()
+        self.entry = tk.Entry(
+            input_bar, textvariable=self.entry_var, bg=C.SURFACE, fg=C.TEXT,
+            insertbackground=C.TEXT, relief=tk.FLAT, bd=0,
+            highlightthickness=1, highlightbackground=C.STROKE,
+            highlightcolor=C.ACCENT, font=ui_font(10),
+        )
+        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7)
+        self.entry.bind("<Return>", lambda _e: self._submit())
+        RoundedButton(input_bar, text="发送", variant="primary", width=72,
+                      height=32, radius=8, bg=C.BG,
+                      command=self._submit).pack(side=tk.RIGHT, padx=(8, 0))
+
+        wrap = tk.Frame(self, bg=C.BG)
+        wrap.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
+                  padx=(10, 4), pady=(8, 4))
+        self._scrollbar = tk.Canvas(wrap, width=6, bg=C.BG,
+                                    highlightthickness=0, bd=0)
+        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+        self._scrollbar.bind("<Button-1>", self._on_scrollbar)
+        self._scrollbar.bind("<B1-Motion>", self._on_scrollbar)
+        self._canvas = tk.Canvas(
+            wrap, bg=C.BG, highlightthickness=0, bd=0,
+            yscrollcommand=lambda *_a: self._update_scrollbar())
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._inner = tk.Frame(self._canvas, bg=C.BG)
+        self._window = self._canvas.create_window(
+            (0, 0), window=self._inner, anchor="nw", width=300)
+        self._inner.bind(
+            "<Configure>",
+            lambda _e: (self._canvas.configure(scrollregion=self._canvas.bbox("all")),
+                        self._update_scrollbar()))
+        self._canvas.bind(
+            "<Configure>",
+            lambda event: self._canvas.itemconfigure(self._window, width=event.width))
+        self.bind("<MouseWheel>", self._on_wheel)
+        self._list = tk.Frame(self._inner, bg=C.BG)
+        self._list.pack(fill=tk.X)
+        self.empty_label = tk.Label(self._inner, text="还没有消息，打个招呼吧",
+                                    bg=C.BG, fg=C.TEXT_DIM, font=ui_font(9))
+        self.empty_label.pack(pady=30)
+
+    # ------------------------------------------------------------ 数据
+    def add_message(self, message, mine=False):
+        self._messages.append(message)
+        self._render_message(message, mine=mine)
+        self.count_label.configure(text=f"{len(self._messages)} 条")
+        self.empty_label.pack_forget()
+        self.after_idle(self._scroll_bottom)
+
+    def set_messages(self, messages, my_id=""):
+        self._clear_rows()
+        self._messages = list(messages or [])
+        for message in self._messages:
+            self._render_message(message,
+                                 mine=(message.get("sender_id") == my_id))
+        self.count_label.configure(text=f"{len(self._messages)} 条"
+                                   if self._messages else "")
+        if self._messages:
+            self.empty_label.pack_forget()
+        else:
+            self.empty_label.pack(pady=30)
+        self.after_idle(self._scroll_bottom)
+
+    def clear(self):
+        self._clear_rows()
+        self._messages = []
+        self.count_label.configure(text="")
+        self.empty_label.pack(pady=30)
+        self.after_idle(self._scroll_bottom)
+
+    def _clear_rows(self):
+        for child in self._list.winfo_children():
+            child.destroy()
+
+    def _render_message(self, message, mine=False):
+        row = tk.Frame(self._list, bg=C.BG)
+        row.pack(fill=tk.X, pady=(0, 8), padx=2)
+        wrap = tk.Frame(row, bg=C.BG)
+        wrap.pack(side=tk.RIGHT if mine else tk.LEFT)
+        tk.Label(wrap, text=message.get("name") or "?",
+                 bg=C.BG, fg=C.ACCENT if mine else C.TEXT_MUTED,
+                 font=ui_font(8), anchor="e" if mine else "w").pack(
+            fill=tk.X, padx=2)
+        tk.Label(wrap, text=message.get("text") or "",
+                 bg=C.ACCENT_SOFT if mine else C.SURFACE,
+                 fg=C.TEXT, font=ui_font(10), wraplength=220,
+                 justify=tk.LEFT, padx=10, pady=7, anchor="w").pack(fill=tk.X)
+        try:
+            clock = time.strftime("%H:%M", time.localtime(int(message.get("ts"))))
+        except (TypeError, ValueError):
+            clock = ""
+        if clock:
+            tk.Label(wrap, text=clock, bg=C.BG, fg=C.TEXT_DIM,
+                     font=mono_font(7), anchor="e" if mine else "w").pack(
+                fill=tk.X, padx=2)
+
+    # ------------------------------------------------------------ 输入
+    def _submit(self):
+        text = self.entry_var.get().strip()
+        if not text:
+            return
+        self.entry_var.set("")
+        self._on_send(text[:CHAT_MAX_CHARS])
+
+    # ------------------------------------------------------------ 滚动
+    def _on_wheel(self, event):
+        try:
+            self._canvas.yview_scroll(int(-event.delta / 120), "units")
+        except tk.TclError:
+            pass
+
+    def _on_scrollbar(self, event):
+        height = self._scrollbar.winfo_height() or 1
+        self._canvas.yview_moveto(max(0.0, min(1.0, event.y / height)))
+
+    def _update_scrollbar(self):
+        bar = self._scrollbar
+        try:
+            bar.delete("all")
+            total = float(self._inner.winfo_height() or 0)
+            view = float(self._canvas.winfo_height() or 0)
+            if total <= view + 2:
+                return
+            first, last = self._canvas.yview()
+            height = bar.winfo_height() or 1
+            y0 = int(first * height)
+            y1 = max(y0 + 24, int(last * height))
+            draw_round_rect(bar, 1, y0, 5, min(y1, height), 2,
+                            fill=C.STROKE_SOFT)
+        except tk.TclError:
+            pass
+
+    def _scroll_bottom(self):
+        try:
+            self._canvas.yview_moveto(1.0)
+        except tk.TclError:
+            pass
+
+
 class StreamWatchView(tk.Canvas):
     """加入会话后的同步面板: 不渲染视频, 只展示同步状态。"""
 
@@ -4205,6 +4374,7 @@ class VideoPlayerApp:
         self._client_password = None
         self._password_dialog = None
         self._member_dialog = None
+        self._chat_messages = []
         self._sout_targets = None
         self._stream_epoch = 0
         self._last_room_count = -1
@@ -4442,9 +4612,12 @@ class VideoPlayerApp:
         tk.Label(status_row, text="空格 播放/暂停    ← → 快退/快进    F 全屏    Ctrl+L 日志",
                  bg=C.DECK, fg=C.TEXT_DIM, font=ui_font(8)).pack(side=tk.RIGHT)
 
-        # 视频区 + 空状态 + 同步面板
-        self.video_frame = tk.Frame(self.root, bg=C.VIDEO, highlightthickness=0)
-        self.video_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # 视频区 + 右侧聊天 + 空状态 + 同步面板
+        self.content = tk.Frame(self.root, bg=C.VIDEO, highlightthickness=0)
+        self.content.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.video_frame = tk.Frame(self.content, bg=C.VIDEO, highlightthickness=0)
+        self.video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.chat_panel = ChatPanel(self.content, on_send=self._send_chat)
         self.drop_hint = EmptyStateView(self.video_frame, on_open=self.open_file_dialog,
                                         bg=C.VIDEO)
         self.drop_hint.pack(fill=tk.BOTH, expand=True)
@@ -4849,6 +5022,9 @@ class VideoPlayerApp:
         self.stream_button.set_active(True)
         self._refresh_stream_button_tooltip()
         self._sync_members_button()
+        self._chat_messages = []
+        self.chat_panel.clear()
+        self._sync_chat_panel()
         log.info("开始主持流式: TCP 指令端口 %d, UDP 流端口 %d, 房间密码 %s",
                  cmd_port, udp_port, "开启" if self._host_password else "关闭")
         password_hint = " · 密码" if self._host_password else ""
@@ -4887,6 +5063,9 @@ class VideoPlayerApp:
         self._refresh_stream_button_tooltip()
         self._close_member_dialog()
         self._sync_members_button()
+        self._chat_messages = []
+        self.chat_panel.clear()
+        self._sync_chat_panel()
         self._host_password = ""
         log.info("停止主持流式")
         self._set_status("已停止主持")
@@ -5053,12 +5232,20 @@ class VideoPlayerApp:
             self._broadcast_room()
             self._rebuild_stream()
             self._host_server.reply(client_id, self._state_message())
+            self._host_server.reply(client_id, {
+                "v": STREAM_VERSION, "type": "chat_history",
+                "messages": list(self._chat_messages),
+            })
             self._set_status(f"客户端接入 · 房间 {self._room_count()} 人", "playing")
         elif message_type == "rename":
             name = str(message.get("name") or "").strip()[:32]
             if 4 <= len(name) <= 32 and self._host_server.rename_client(client_id, name):
                 log.info("成员改名: %s (%s)", name, client_id)
                 self._broadcast_room()
+        elif message_type == "chat":
+            text = str(message.get("text") or "").strip()
+            if text:
+                self._host_add_chat(client_id, text[:CHAT_MAX_CHARS])
         elif message_type == "cmd":
             self._apply_remote_command(client_id, message.get("action"),
                                        message.get("value"))
@@ -5387,6 +5574,70 @@ class VideoPlayerApp:
         except (tk.TclError, AttributeError):
             pass
 
+    # ---------------------------------------------------------- 房间聊天
+    def _chat_limit(self):
+        try:
+            return max(1, int(self.settings.get("chat_limit", 200)))
+        except (TypeError, ValueError):
+            return 200
+
+    def _trim_chat_history(self):
+        limit = self._chat_limit()
+        if len(self._chat_messages) > limit:
+            del self._chat_messages[:len(self._chat_messages) - limit]
+
+    def _send_chat(self, text):
+        text = str(text or "").strip()
+        if not text:
+            return
+        text = text[:CHAT_MAX_CHARS]
+        if self._hosting:
+            self._host_add_chat("host", text)
+        elif self._client_active:
+            # 客户端不在本地展示, 等主持转发回来再显示
+            self._client_send({"v": STREAM_VERSION, "type": "chat",
+                               "text": text})
+        else:
+            self._set_status("不在房间中, 无法发送消息", "error")
+
+    def _host_add_chat(self, sender_id, text):
+        if self._host_server is None:
+            return
+        name = self._host_name()
+        if sender_id != "host":
+            for member in self._host_server.snapshot():
+                if member["id"] == sender_id:
+                    name = member.get("name") or f"客户端-{sender_id}"
+                    break
+        message = {
+            "sender_id": sender_id,
+            "name": name,
+            "text": str(text)[:CHAT_MAX_CHARS],
+            "ts": int(time.time()),
+        }
+        self._chat_messages.append(message)
+        self._trim_chat_history()
+        self._host_server.broadcast({"v": STREAM_VERSION, "type": "chat",
+                                     "message": message})
+        self._append_chat_ui(message, mine=(sender_id == "host"))
+
+    def _append_chat_ui(self, message, mine=False):
+        try:
+            self.chat_panel.add_message(message, mine=mine)
+        except tk.TclError:
+            pass
+
+    def _sync_chat_panel(self):
+        try:
+            active = (self._hosting or self._client_active) and not self._fullscreen
+            if active:
+                if not self.chat_panel.winfo_ismapped():
+                    self.chat_panel.pack(side=tk.RIGHT, fill=tk.Y)
+            else:
+                self.chat_panel.pack_forget()
+        except (tk.TclError, AttributeError):
+            pass
+
     def _refresh_stream_button_tooltip(self):
         tooltip = getattr(self.stream_button, "_tooltip", None)
         if tooltip is None:
@@ -5444,6 +5695,9 @@ class VideoPlayerApp:
         self.open_button.set_enabled(False)
         self._refresh_stream_button_tooltip()
         self._sync_members_button()
+        self._chat_messages = []
+        self.chat_panel.clear()
+        self._sync_chat_panel()
         self.root.title(f"同步播放 — {APP_TITLE}")
         if self._client_connect():
             log.info("已连接主持 %s:%d (流接收 %s:%d)",
@@ -5487,6 +5741,9 @@ class VideoPlayerApp:
         self._refresh_stream_button_tooltip()
         self._close_member_dialog()
         self._sync_members_button()
+        self._chat_messages = []
+        self.chat_panel.clear()
+        self._sync_chat_panel()
         self.root.title(APP_TITLE)
         speed_backup = getattr(self, "_client_speed_backup", None) or "1.0x"
         if self.speed_var.get() != speed_backup:
@@ -5706,6 +5963,17 @@ class VideoPlayerApp:
             self._refresh_stream_button_tooltip()
             self._refresh_member_dialog()
             self._watch_refresh()
+        elif message_type == "chat":
+            chat = message.get("message") or {}
+            self._chat_messages.append(chat)
+            self._trim_chat_history()
+            self._append_chat_ui(
+                chat, mine=(chat.get("sender_id") == self._client_id))
+        elif message_type == "chat_history":
+            self._chat_messages = list(message.get("messages") or [])
+            self._trim_chat_history()
+            self.chat_panel.set_messages(self._chat_messages,
+                                         self._client_id or "")
         elif message_type == "kicked":
             reason = str(message.get("reason") or "你已被主持移出房间")
             log.info("被主持移出房间: %s", reason)
@@ -6067,6 +6335,12 @@ class VideoPlayerApp:
         self.seek_step_ms = int(settings["seek_step"]) * 1000
         self._apply_log_level(settings.get("log_level", "INFO"))
         ANIMATIONS_ENABLED = bool(settings.get("animations", True))
+        self._trim_chat_history()
+        if self._hosting:
+            try:
+                self.chat_panel.set_messages(self._chat_messages, "host")
+            except tk.TclError:
+                pass
         restart_needed = (
             settings["decode_mode"] != self._active_decode_mode
             or settings["accent"] != self._active_accent
@@ -6384,6 +6658,7 @@ class VideoPlayerApp:
         self._fullscreen = True
         self.deck.pack_forget()
         self.root.attributes("-fullscreen", True)
+        self._sync_chat_panel()
         self.fullscreen_button.set_icon(icon_restore)
         if self._fs_dock is not None:
             try:
@@ -6410,7 +6685,8 @@ class VideoPlayerApp:
         if self._saved_geometry:
             self.root.geometry(self._saved_geometry)
         # 只把控制栏插回视频区之前, 不重建视频区, 避免打扰 VLC 的输出窗口
-        self.deck.pack(side=tk.BOTTOM, fill=tk.X, before=self.video_frame)
+        self.deck.pack(side=tk.BOTTOM, fill=tk.X, before=self.content)
+        self._sync_chat_panel()
         self.fullscreen_button.set_icon(icon_fullscreen)
         self.root.after(60, lambda: apply_dark_titlebar(self.root))
         log.info("退出全屏 (尺寸 %s)", self.root.geometry())
