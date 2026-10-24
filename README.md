@@ -62,7 +62,7 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - Hover transition animations, which can be disabled in settings
 
 ### Fullscreen control island
-- Move the mouse to the very bottom edge and a rounded floating bar rises — it sits **above** the bottom edge instead of sticking to it
+- Move the mouse toward the bottom of the screen and a rounded floating bar rises — it sits **above** the bottom edge instead of sticking to it
 - Play / pause, skip back / forward, progress, volume, speed, exit fullscreen
 - Slides away 1.6 seconds after the mouse leaves
 

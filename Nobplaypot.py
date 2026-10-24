@@ -3205,6 +3205,10 @@ class _StreamDialogBase(tk.Toplevel):
         self.resizable(False, False)
         self.transient(master)
         self.result = None
+        self._drag_offset = None
+        # 整个顶部区域(含标题下方留白)都能拖动, 不只是文字标签
+        self.bind("<Button-1>", self._start_drag_top, add="+")
+        self.bind("<B1-Motion>", self._drag_top, add="+")
         self.body = tk.Frame(self, bg=C.BG, padx=28, pady=24)
         self.body.pack(fill=tk.BOTH, expand=True)
         self.error_label = tk.Label(self.body, text="", bg=C.BG, fg=C.DANGER,
@@ -3213,6 +3217,19 @@ class _StreamDialogBase(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self._on_escape())
         # 点窗口右上角关闭等同于取消, 保证 result/choice 一定有值
         self.protocol("WM_DELETE_WINDOW", lambda: self.finish(None))
+
+    def _start_drag_top(self, event):
+        if event.y_root - self.winfo_rooty() > 54:
+            return
+        self._drag_offset = (event.x_root - self.winfo_x(),
+                             event.y_root - self.winfo_y())
+
+    def _drag_top(self, event):
+        if self._drag_offset is None:
+            return
+        x = event.x_root - self._drag_offset[0]
+        y = event.y_root - self._drag_offset[1]
+        self.geometry(f"+{x}+{y}")
 
     def show_error(self, text):
         self.error_label.configure(text=text)
@@ -3452,6 +3469,10 @@ class RoomPasswordDialog(_StreamDialogBase):
     def _start_drag(self, event):
         self._drag_offset = (event.x_root - self.winfo_x(),
                              event.y_root - self.winfo_y())
+
+    def _start_drag_top(self, event):
+        if event.y_root - self.winfo_rooty() <= 54:
+            self._start_drag(event)
 
     def _on_drag(self, event):
         if self._drag_offset is None:
@@ -3996,6 +4017,8 @@ class RoomMembersDialog(tk.Toplevel):
         for widget in (header, self.title_label):
             widget.bind("<Button-1>", self._start_drag)
             widget.bind("<B1-Motion>", self._on_drag)
+        self.bind("<Button-1>", self._start_drag_top, add="+")
+        self.bind("<B1-Motion>", self._on_drag, add="+")
 
         wrap = tk.Frame(self, bg=C.BG)
         wrap.pack(fill=tk.BOTH, expand=True, padx=18)
@@ -4109,6 +4132,10 @@ class RoomMembersDialog(tk.Toplevel):
     def _start_drag(self, event):
         self._drag_offset = (event.x_root - self.winfo_x(),
                              event.y_root - self.winfo_y())
+
+    def _start_drag_top(self, event):
+        if event.y_root - self.winfo_rooty() <= 54:
+            self._start_drag(event)
 
     def _on_drag(self, event):
         if self._drag_offset is None:
@@ -4684,6 +4711,8 @@ class VideoPlayerApp:
         self._client_password = None
         self._password_dialog = None
         self._member_dialog = None
+        self._secondary_windows = []
+        self._secondary_job = None
         self._chat_messages = []
         self._danmaku_sync_job = None
         self._danmaku_watch_job = None
@@ -5066,22 +5095,43 @@ class VideoPlayerApp:
         self._cancel_fs_hide()
         self._cancel_fs_anim()
 
+    def _fs_show_zone(self, py):
+        """底部显示区: 覆盖控制岛目标位置上方一段, 鼠标进入必出。"""
+        try:
+            _sw, sh = self._fs_screen()
+            _w, height, _x, y = self._fs_dock_size()
+        except tk.TclError:
+            return False
+        return py >= max(0, min(sh, y - 40))
+
+    def _on_fs_motion(self, event):
+        if not self._fullscreen:
+            return
+        try:
+            px, py = event.x_root, event.y_root
+        except Exception:
+            return
+        if self._fs_show_zone(py) or self._fs_dock_zone(px, py):
+            if not self._fs_dock_visible:
+                self._show_fs_dock()
+            else:
+                self._cancel_fs_hide()
+
     def _fs_watch(self):
         self._fs_poll_job = None
         if not self._fullscreen:
             return
         try:
             px, py = self.root.winfo_pointerxy()
-            _sw, sh = self._fs_screen()
         except tk.TclError:
             return
-        bottom_zone = py >= sh - 8
+        show_zone = self._fs_show_zone(py)
         dock_zone = self._fs_dock_zone(px, py)
         if not self._fs_dock_visible:
-            if bottom_zone or (dock_zone and self._fs_animating):
+            if show_zone or dock_zone:
                 self._show_fs_dock()
         else:
-            if bottom_zone or dock_zone:
+            if show_zone or dock_zone:
                 self._cancel_fs_hide()
             else:
                 self._schedule_fs_hide()
@@ -5184,6 +5234,11 @@ class VideoPlayerApp:
         self.root.bind("<Control-l>", lambda e: self._shortcut(self.open_log_folder))
         self.root.bind("<Control-L>", lambda e: self._shortcut(self.open_log_folder))
         self.root.bind("<FocusOut>", self._on_root_focus_out, add="+")
+        self.root.bind("<FocusIn>", lambda _e: self._lift_secondary(), add="+")
+        self.root.bind("<Button-1>",
+                       lambda _e: self.root.after_idle(self._lift_secondary),
+                       add="+")
+        self.root.bind("<Motion>", self._on_fs_motion, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _on_root_focus_out(self, _event=None):
@@ -5220,11 +5275,13 @@ class VideoPlayerApp:
             mode = "off"
             info = ""
         dialog = StreamMenuDialog(self.root, mode, host_info=info, join_info=info)
+        self._track_dialog(dialog)
         dialog.present()
         choice = dialog.choice
         log.debug("流式菜单选择: %s", choice)
         if choice == "host":
             host_dialog = HostStreamDialog(self.root, *self._last_host_ports)
+            self._track_dialog(host_dialog)
             host_dialog.present()
             if host_dialog.result is not None:
                 result = host_dialog.result
@@ -5238,6 +5295,7 @@ class VideoPlayerApp:
                 cmd_addr=f"{self._last_join_addrs[0]}:{self._last_join_addrs[1]}",
                 stream_addr=f"{self._last_join_addrs[2]}:{self._last_join_addrs[3]}",
             )
+            self._track_dialog(join_dialog)
             join_dialog.present()
             if join_dialog.result is not None:
                 cmd_host, cmd_port, udp_host, udp_port = join_dialog.result
@@ -5857,6 +5915,7 @@ class VideoPlayerApp:
             is_host=self._hosting,
             my_id="host" if self._hosting else (self._client_id or ""),
         )
+        self._track_dialog(self._member_dialog)
         self._refresh_member_dialog()
         self._member_dialog.present_async()
 
@@ -6000,7 +6059,72 @@ class VideoPlayerApp:
         except Exception:
             return True
 
+    def _track_dialog(self, dialog):
+        if dialog is None:
+            return
+        if dialog not in self._secondary_windows:
+            self._secondary_windows.append(dialog)
+        try:
+            dialog.bind("<Destroy>", lambda _e, d=dialog: self._forget_dialog(d),
+                        add="+")
+        except tk.TclError:
+            pass
+        self._lift_secondary()
+        if self._secondary_job is None:
+            self._secondary_job = self.root.after(300, self._watch_secondary)
+
+    def _forget_dialog(self, dialog):
+        try:
+            self._secondary_windows.remove(dialog)
+        except ValueError:
+            pass
+
+    def _app_group_active(self):
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            fg = user32.GetForegroundWindow()
+            if not fg:
+                return True
+            root_hwnd = user32.GetAncestor(int(self.root.winfo_id()), 2)
+            if int(fg) == int(root_hwnd):
+                return True
+            for dialog in self._secondary_windows:
+                if not dialog.winfo_exists():
+                    continue
+                if int(fg) == int(user32.GetAncestor(int(dialog.winfo_id()), 2)):
+                    return True
+            return False
+        except Exception:
+            return True
+
+    def _lift_secondary(self):
+        alive = []
+        for dialog in self._secondary_windows:
+            try:
+                if not dialog.winfo_exists():
+                    continue
+                alive.append(dialog)
+                if dialog.winfo_viewable():
+                    dialog.lift()
+            except tk.TclError:
+                pass
+        self._secondary_windows = alive
+
+    def _watch_secondary(self):
+        self._secondary_job = None
+        if self._secondary_windows and self._app_group_active():
+            self._lift_secondary()
+        if self._secondary_windows:
+            self._secondary_job = self.root.after(300, self._watch_secondary)
+
     def _dialog_open(self):
+        for dialog in self._secondary_windows:
+            try:
+                if dialog.winfo_exists():
+                    return True
+            except tk.TclError:
+                pass
         for attr in ("_settings_dialog", "_member_dialog", "_password_dialog"):
             dialog = getattr(self, attr, None)
             if dialog is not None:
@@ -6474,6 +6598,7 @@ class VideoPlayerApp:
             error=error,
         )
         self._password_dialog = dialog
+        self._track_dialog(dialog)
         dialog.present_async()
         self._set_status("房间需要密码 · 请输入密码", "playing")
 
@@ -6774,6 +6899,7 @@ class VideoPlayerApp:
     def open_settings(self):
         self._settings_dialog = SettingsDialog(self.root, self.settings,
                                                self.apply_settings)
+        self._track_dialog(self._settings_dialog)
         self._sync_danmaku()
         try:
             self._settings_dialog.present()
