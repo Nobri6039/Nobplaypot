@@ -4282,14 +4282,15 @@ class DanmakuOverlay(tk.Toplevel):
     def set_geometry(self, x, y, width, height):
         width = max(1, int(width))
         height = max(1, int(height))
-        if (width, height) != (self._width, self._height):
+        size_changed = (width, height) != (self._width, self._height)
+        if size_changed:
             self._clear()
             self._width, self._height = width, height
             self.canvas.configure(width=width, height=height)
             self._font = tkfont.Font(font=ui_font(self._size, True))
         self._lane_height = max(18, self._size + 12)
         self.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
-        if self._visible:
+        if size_changed and self._visible:
             try:
                 self.lift()
             except tk.TclError:
@@ -4845,6 +4846,8 @@ class VideoPlayerApp:
         self.danmaku = DanmakuOverlay(self.root)
         self.video_frame.bind("<Configure>",
                               lambda _e: self._schedule_danmaku_sync())
+        self.root.bind("<Configure>",
+                       lambda _e: self._schedule_danmaku_sync(), add="+")
         self.drop_hint = EmptyStateView(self.video_frame, on_open=self.open_file_dialog,
                                         bg=C.VIDEO)
         self.drop_hint.pack(fill=tk.BOTH, expand=True)
