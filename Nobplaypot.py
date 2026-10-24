@@ -3838,7 +3838,7 @@ class SettingsDialog(_StreamDialogBase):
 
     # -------------------------------------------------------------- 保存
     def _reset(self):
-        self._draft = dict(DEFAULT_SETTINGS)
+        self._draft = normalize_settings(dict(DEFAULT_SETTINGS))
         self._vars.clear()
         self._label_maps.clear()
         self._select_tab(self._current_tab() or "general")
