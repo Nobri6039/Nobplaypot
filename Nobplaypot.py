@@ -106,7 +106,8 @@ STREAM_DEFAULT_CMD_PORT = 5000
 STREAM_DEFAULT_UDP_PORT = 5001
 STREAM_MAX_CLIENTS = 32
 STREAM_HEARTBEAT_S = 2.0
-STREAM_STALE_S = 8.0
+STREAM_STALE_S = 12.0
+CONFIG_VERSION = 3
 STREAM_MAX_MSG_BYTES = 65536
 STREAM_PASSWORD_ATTEMPTS = 5
 CHAT_MAX_CHARS = 200
@@ -198,10 +199,10 @@ DEFAULT_SETTINGS = {
     "fps": 30,
     "audio_bitrate": 128,
     "preset": "veryfast",
-    "keyint": 30,
-    "client_caching": 1000,     # ms
+    "keyint": 24,
+    "client_caching": 2000,     # ms
     "heartbeat": 2.0,           # s
-    "stale": 8.0,               # s
+    "stale": 12.0,              # s
     "cmd_port": STREAM_DEFAULT_CMD_PORT,
     "udp_port": STREAM_DEFAULT_UDP_PORT,
 }
@@ -348,7 +349,27 @@ def normalize_settings(data):
 
 
 def load_settings():
-    return normalize_settings(load_config().get("settings"))
+    config = load_config()
+    raw = dict(config.get("settings") or {})
+    legacy = config.get("settings_version") != CONFIG_VERSION
+    if legacy:
+        # 旧版本默认值升级: 更抗网络抖动的缓冲和关键帧
+        try:
+            if int(raw.get("client_caching", 1000)) < 1500:
+                raw["client_caching"] = 2000
+        except (TypeError, ValueError):
+            pass
+        if raw.get("keyint") == 30:
+            raw["keyint"] = 24
+        try:
+            if abs(float(raw.get("stale", 8.0)) - 8.0) < 1e-6:
+                raw["stale"] = 12.0
+        except (TypeError, ValueError):
+            pass
+    settings = normalize_settings(raw)
+    if legacy:
+        save_config(settings_version=CONFIG_VERSION, settings=settings)
+    return settings
 
 
 def save_settings(settings):
@@ -4426,24 +4447,14 @@ class ChatPanel(tk.Frame):
             pass
 
 
-class DanmakuOverlay(tk.Toplevel):
-    """透明弹幕层: 覆盖视频区, 文字从右向左飘过。"""
+class DanmakuOverlay(tk.Canvas):
+    """窗口内透明弹幕层: 作为视频区的子窗口, 随窗口移动/缩放, 可被其他窗口盖住。"""
 
     KEY = "#010203"
 
     def __init__(self, master):
-        super().__init__(master)
-        self.withdraw()
-        self.overrideredirect(True)
-        self.configure(bg=self.KEY)
-        try:
-            self.attributes("-topmost", True)
-            self.attributes("-transparentcolor", self.KEY)
-            self.attributes("-toolwindow", True)
-        except tk.TclError:
-            pass
-        self.canvas = tk.Canvas(self, bg=self.KEY, highlightthickness=0, bd=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        super().__init__(master, bg=self.KEY, highlightthickness=0, bd=0)
+        self.canvas = self
         self._active = []
         self._queue = []
         self._seq = 0
@@ -4460,42 +4471,46 @@ class DanmakuOverlay(tk.Toplevel):
         self._lane_height = 32
         self._font = tkfont.Font(font=ui_font(self._size, True))
         self._visible = False
-        self._make_click_through()
+        self._layered_child()
+        self.bind("<Configure>", self._on_configure)
 
-    # ------------------------------------------------------------ 窗口
-    def _make_click_through(self):
-        """让弹幕层不接收鼠标, 点击直接落到下面的视频/窗口。"""
+    # ------------------------------------------------------------ 透明子窗口
+    def _layered_child(self):
+        """把 Tk Canvas 子窗口设为透明色键 + 鼠标穿透。"""
         try:
             import ctypes
             hwnd = self.winfo_id()
             user32 = ctypes.windll.user32
             gwl_exstyle = -20
             style = user32.GetWindowLongW(hwnd, gwl_exstyle)
-            # 不要重复设置 WS_EX_LAYERED, 否则会清掉透明色键, 整个窗口变成全透明
             user32.SetWindowLongW(
                 hwnd, gwl_exstyle,
-                style | 0x00000020 | 0x00000080 | 0x08000000)
+                style | 0x00080000 | 0x00000020 | 0x08000000)
+            key = (int(self.KEY[1:3], 16) | (int(self.KEY[3:5], 16) << 8)
+                   | (int(self.KEY[5:7], 16) << 16))
+            user32.SetLayeredWindowAttributes(hwnd, key, 0, 0x1)
         except Exception:
             pass
 
-    def set_geometry(self, x, y, width, height):
-        width = max(1, int(width))
-        height = max(1, int(height))
-        resized = (width, height) != (self._width, self._height)
-        if resized:
-            self._width, self._height = width, height
-            self.canvas.configure(width=width, height=height)
-        old_size = self._size
+    def _raise_native(self):
+        """把弹幕层抬到 VLC 视频子窗口之上。"""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.SetWindowPos(self.winfo_id(), 0, 0, 0, 0, 0,
+                                0x0001 | 0x0002 | 0x0010 | 0x0040)
+        except Exception:
+            pass
+
+    def _on_configure(self, event):
+        width = max(1, int(event.width))
+        height = max(1, int(event.height))
+        if (width, height) == (self._width, self._height):
+            return
+        self._width, self._height = width, height
         self._recalc_font()
-        if resized or self._size != old_size:
-            self._clear()
         self._lane_height = max(18, self._size + 12)
-        self.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
-        if (resized or self._size != old_size) and self._visible:
-            try:
-                self.lift()
-            except tk.TclError:
-                pass
+        self._clear()
 
     def _recalc_font(self):
         # 弹幕字号随视频高度缩放: 窗口和全屏视觉大小一致
@@ -4533,13 +4548,11 @@ class DanmakuOverlay(tk.Toplevel):
 
     def show(self):
         if self._visible:
+            self._raise_native()
             return
         self._visible = True
-        self.deiconify()
-        try:
-            self.lift()
-        except tk.TclError:
-            pass
+        self.place(x=0, y=0, relwidth=1, relheight=1)
+        self._raise_native()
         self._last = None
         self._start()
 
@@ -4548,7 +4561,60 @@ class DanmakuOverlay(tk.Toplevel):
         self._clear()
         self._stop()
         try:
-            self.withdraw()
+            self.place_forget()
+        except tk.TclError:
+            pass
+
+    def _recalc_font(self):
+        # 弹幕字号随视频高度缩放: 窗口和全屏视觉大小一致
+        scale = max(0.8, min(2.8, self._height / 600.0)) if self._height > 1 else 1.0
+        self._scale = scale
+        actual = max(9, min(96, int(round(self._base_size * scale))))
+        if actual != self._size:
+            self._size = actual
+            self._lane_height = max(18, actual + 12)
+            self._font = tkfont.Font(font=ui_font(actual, True))
+
+    def configure_style(self, size, speed, color="#FFFFFF", area=100):
+        base_size = max(10, min(48, int(size)))
+        speed = max(0.2, min(5.0, float(speed)))
+        try:
+            area = int(area)
+        except (TypeError, ValueError):
+            area = 100
+        if area not in (100, 50, 40, 30, 20):
+            area = 100
+        color = str(color or "#FFFFFF")
+        base_changed = base_size != self._base_size
+        area_changed = area != self._area
+        color_changed = color != self._color
+        self._base_size = base_size
+        self._speed = speed
+        self._color = color
+        self._area = area
+        if base_changed or area_changed:
+            self._recalc_font()
+            self._clear()
+        elif color_changed:
+            for item in self._active:
+                self.canvas.itemconfigure(item["item"], fill=self._color)
+
+    def show(self):
+        if self._visible:
+            self._raise_native()
+            return
+        self._visible = True
+        self.place(x=0, y=0, relwidth=1, relheight=1)
+        self._raise_native()
+        self._last = None
+        self._start()
+
+    def hide(self):
+        self._visible = False
+        self._clear()
+        self._stop()
+        try:
+            self.place_forget()
         except tk.TclError:
             pass
 
@@ -4858,6 +4924,12 @@ class VideoPlayerApp:
         self._client_state = None
         self._client_state_ts = 0.0
         self._client_last_recv = 0.0
+        self._client_watchdog_job = None
+        self._client_video_start_ts = 0.0
+        self._client_last_media_ms = -1
+        self._client_stall_since = None
+        self._client_last_restart = 0.0
+        self._client_restart_count = 0
         self._client_cmd_addr = None
         self._client_udp_addr = None
         self._client_stop = threading.Event()
@@ -5071,7 +5143,7 @@ class VideoPlayerApp:
         self.video_frame = tk.Frame(self.content, bg=C.VIDEO, highlightthickness=0)
         self.video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.chat_panel = ChatPanel(self.content, on_send=self._send_chat)
-        self.danmaku = DanmakuOverlay(self.root)
+        self.danmaku = DanmakuOverlay(self.video_frame)
         self.video_frame.bind("<Configure>",
                               lambda _e: self._schedule_danmaku_sync())
         self.root.bind("<Configure>",
@@ -5082,6 +5154,7 @@ class VideoPlayerApp:
         self.watch_view = StreamWatchView(self.video_frame, bg=C.VIDEO)
         self._build_fs_dock()
         self.root.after(500, self._watch_danmaku)
+        self.root.after(1000, self._client_watchdog)
 
     # ------------------------------------------------------- 全屏控制 dock
     def _build_fs_dock(self):
@@ -6273,10 +6346,7 @@ class VideoPlayerApp:
         return (bool(self.settings.get("danmaku", True))
                 and (self._hosting or self._client_active)
                 and (self.current_path is not None or self._client_active)
-                and bool(self.root.winfo_viewable())
-                and not self._dialog_open()
-                and (self._fullscreen or self._app_is_foreground()
-                     or self._app_visible_at_video()))
+                and bool(self.root.winfo_viewable()))
 
     def _sync_danmaku(self, clear=False):
         overlay = getattr(self, "danmaku", None)
@@ -6293,17 +6363,8 @@ class VideoPlayerApp:
             if not self._danmaku_should_show():
                 overlay.hide()
                 return
-            self.video_frame.update_idletasks()
-            x = self.video_frame.winfo_rootx()
-            y = self.video_frame.winfo_rooty()
-            width = self.video_frame.winfo_width()
-            height = self.video_frame.winfo_height()
-            if width <= 2 or height <= 2:
-                overlay.hide()
-                return
             if clear:
                 overlay._clear()
-            overlay.set_geometry(x, y, width, height)
             overlay.show()
         except tk.TclError:
             pass
@@ -6607,6 +6668,11 @@ class VideoPlayerApp:
             self._client_media = self.instance.media_new(url)
             self._client_media.add_option(f":network-caching={caching}")
             self._client_media.add_option(f":live-caching={caching}")
+            # 直播流不对时钟做严格等待, 丢包时尽量继续出画面而不是直接黑屏
+            self._client_media.add_option(":clock-jitter=0")
+            self._client_media.add_option(":clock-synchro=0")
+            self._client_media.add_option(":drop-late-frames")
+            self._client_media.add_option(":skip-frames")
             self.player.set_media(self._client_media)
             # 画面速率由主持端的转码流决定, 本地固定 1.0x
             self.player.set_rate(1.0)
@@ -6614,11 +6680,66 @@ class VideoPlayerApp:
             self.player.audio_set_mute(self.mute_var.get())
             self.player.play()
             self._client_video_started = True
+            self._client_video_start_ts = time.monotonic()
+            self._client_last_media_ms = -1
+            self._client_stall_since = None
             self._schedule_danmaku_sync()
             self.watch_view.pack_forget()
             log.info("客户端开始接收并渲染流: %s", url)
         except Exception:
             log.exception("客户端流渲染启动失败")
+
+    def _client_watchdog(self):
+        self._client_watchdog_job = None
+        if self._closing:
+            return
+        try:
+            self._client_watchdog_check()
+        except Exception:
+            log.exception("客户端画面看门狗异常")
+        finally:
+            if not self._closing:
+                self._client_watchdog_job = self.root.after(
+                    1000, self._client_watchdog)
+
+    def _client_watchdog_check(self):
+        if not (self._client_active and self._client_video_started
+                and self.player is not None):
+            self._client_stall_since = None
+            return
+        if getattr(self, "_client_preparing", False):
+            return
+        state = self._client_state or {}
+        if not state.get("playing") or state.get("stopped"):
+            self._client_stall_since = None
+            return
+        now = time.monotonic()
+        if now - self._client_video_start_ts < 6.0:
+            return
+        try:
+            media_ms = int(self.player.get_time())
+            playing = bool(self.player.is_playing())
+        except Exception:
+            return
+        if media_ms >= 0 and media_ms != self._client_last_media_ms:
+            self._client_last_media_ms = media_ms
+            self._client_stall_since = now
+            return
+        if self._client_stall_since is None:
+            self._client_stall_since = now
+            return
+        stall = now - self._client_stall_since
+        if (not playing and stall >= 2.0) or stall >= 5.0:
+            if now - self._client_last_restart < 5.0:
+                return
+            self._client_last_restart = now
+            self._client_restart_count += 1
+            log.warning("客户端画面停滞 %.1fs, 自动重连 UDP 流 (第 %d 次)",
+                        stall, self._client_restart_count)
+            self._set_status("画面中断 · 正在自动重连流…", "playing")
+            self._client_stall_since = None
+            self._client_last_media_ms = -1
+            self._start_client_video()
 
     def _stop_client_video(self):
         """退出会话: 旧播放器交给后台回收, UI 立刻可用。"""
@@ -6840,7 +6961,7 @@ class VideoPlayerApp:
             return
         if time.time() < self._client_next_retry:
             return
-        if self._client_lost_at and time.time() - self._client_lost_at > 12.0:
+        if self._client_lost_at and time.time() - self._client_lost_at > 20.0:
             log.warning("与主持断开超过 12 秒, 退出会话")
             self._set_status("与主持断开连接, 已退出会话", "error")
             self.leave_stream()
@@ -6929,6 +7050,7 @@ class VideoPlayerApp:
             else:
                 self.player.set_xwindow(hwnd)
             self._hwnd_attached = True
+            self._schedule_danmaku_sync()
             log.info("视频输出已绑定窗口句柄 0x%X", hwnd)
         except Exception as error:
             log.exception("视频输出绑定失败(句柄 0x%X)", hwnd)

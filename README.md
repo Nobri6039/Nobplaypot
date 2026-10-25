@@ -69,6 +69,7 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 ### Streaming (LAN)
 - **Host**: opens a TCP command port (default 5000) and a UDP stream port (default 5001), transcodes the picture to H.264/TS and pushes it to clients
 - **Join**: enter the host's command address and your local receiving address; your VLC renders the incoming UDP stream directly
+- **Resilient playback**: a 2 s receive buffer and frequent keyframes keep the picture alive under jitter; if the UDP input stalls, the client automatically reconnects the stream within a few seconds (buffer adjustable in **Settings → Streaming**)
 - State sync: file, position, duration, pause, speed; clients can remotely play / pause / seek / change speed, while volume and mute stay local
 - Room size and member list sync in real time, up to 32 people (configurable)
 
@@ -91,7 +92,7 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 ### Danmaku
 - New chat messages float over the video as danmaku, right to left — works in windowed and fullscreen mode
 - Each danmaku picks a random lane; when it gets crowded messages queue up and the whole field speeds up automatically, so lanes never overlap
-- Size scales with the video area; shows whenever the player window/video is visible (not just when focused), hiding when fully covered or minimized; the master switch, size, speed, color and area live in **Settings → Chat room**
+- Size scales with the video area; the layer is drawn inside the player window, so it moves with the window, follows fullscreen, and is covered normally by other windows; the master switch, size, speed, color and area live in **Settings → Chat room**
 
 ### Seeking / speed changes while streaming
 - Client seeks are never handled locally; the command is sent to the host
