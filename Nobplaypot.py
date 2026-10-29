@@ -64,7 +64,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 
 APP_TITLE = "Nobplaypot"
-APP_VERSION = "v1.2.1"
+APP_VERSION = "v1.2.2"
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA") or os.path.expanduser("~"), "Nobplaypot"
 )
@@ -4086,6 +4086,9 @@ class SettingsDialog(_StreamDialogBase):
 
         row = self._row(page, "悬停动画", "关闭后按钮与滑块的悬停变化直接切换")
         self._toggle(row, "animations")
+        row = self._row(page, "缓冲提示缩放", "视频中央「缓冲中」动画的大小倍数")
+        self._slider(row, "buffer_scale", 0.5, 2.5,
+                     lambda v: f"{v:.1f}x", width=200)
 
     def _build_chat(self, page):
         self._page_title(page, "聊天室", "用户名、聊天记录与弹幕显示。")
@@ -4148,9 +4151,6 @@ class SettingsDialog(_StreamDialogBase):
         row = self._row(page, "客户端缓冲", "接收端缓冲, 网络抖动大时可调高")
         self._slider(row, "client_caching", 200, 5000,
                      lambda v: f"{int(round(v))} ms", width=200)
-        row = self._row(page, "缓冲图标缩放", "视频中央「缓冲中」提示的大小倍数")
-        self._slider(row, "buffer_scale", 0.5, 2.5,
-                     lambda v: f"{v:.1f}x", width=200)
         row = self._row(page, "心跳间隔", "指令端口心跳包间隔")
         self._slider(row, "heartbeat", 1.0, 10.0, lambda v: f"{v:.1f} 秒")
         row = self._row(page, "离线判定", "超过这个时间没有心跳就判定客户端离线")
@@ -4932,26 +4932,30 @@ class DanmakuOverlay(tk.Canvas):
 
 
 class BufferingOverlay(tk.Canvas):
-    """视频区中央的透明「缓冲中」层: 多个小圆围绕成环, 随视频大小与设置缩放。"""
+    """视频区中央的透明「缓冲中」层: 圆点旋转 + Q弹 + 闪烁, 随视频大小与设置缩放。"""
 
     KEY = "#010203"
     DOTS = 8
     BASE_HEIGHT = 600.0
 
     def __init__(self, master):
-        super().__init__(master, width=200, height=200, bg=self.KEY,
+        super().__init__(master, width=220, height=220, bg=self.KEY,
                          highlightthickness=0, bd=0)
         self._job = None
         self._visible = False
-        self._head = 0
         self._scale = 1.0
         self._user_scale = 1.0
+        self._phase = 0.0
+        self._size = 220
         self._dots = []
+        self._sparkles = []
         self._text = None
+        self._fonts = {}
         self._layered_child()
         self._draw()
         master.bind("<Configure>", self._on_master_configure, add="+")
 
+    # ------------------------------------------------------------ 缩放
     def set_user_scale(self, scale):
         try:
             scale = float(scale)
@@ -4976,40 +4980,79 @@ class BufferingOverlay(tk.Canvas):
         self._scale = scale
         self._draw()
 
+    def _font(self, px):
+        px = max(6, int(round(px)))
+        font = self._fonts.get(px)
+        if font is None:
+            font = tkfont.Font(font=ui_font(px, True))
+            self._fonts[px] = font
+        return font
+
+    # ------------------------------------------------------------ 绘制
     def _draw(self):
         self.delete("all")
-        size = int(200 * self._scale)
+        size = int(220 * self._scale)
+        self._size = size
         self.configure(width=size, height=size)
         if self._visible:
             try:
                 self.place_configure(width=size, height=size)
             except tk.TclError:
                 pass
-        center = size / 2.0
-        ring = size * 0.30
-        dot_r = max(2.0, size * 0.035)
-        text_size = max(9, int(15 * self._scale))
-        ring_y = center - text_size * 0.9
+        cx = size / 2.0
+        ring_cy = size * 0.39
+        radius = size * 0.215
+        dot_px = max(6, size * 0.080)
+        text_px = max(10, size * 0.065)
+        self._text = self.create_text(
+            cx, size * 0.82, text="缓冲中…", fill="#FFFFFF",
+            font=self._font(text_px), anchor="center")
         self._dots = []
         for i in range(self.DOTS):
-            angle = -math.pi / 2 + i * (2 * math.pi / self.DOTS)
-            x = center + ring * math.cos(angle)
-            y = ring_y + ring * math.sin(angle)
-            item = self.create_oval(x - dot_r, y - dot_r, x + dot_r, y + dot_r,
-                                    fill="#FFFFFF", outline="")
-            self._dots.append(item)
-        self._text = self.create_text(center, size * 0.80, text="缓冲中",
-                                      fill="#FFFFFF", font=ui_font(text_size, True))
+            angle = -math.pi / 2 + i * 2 * math.pi / self.DOTS
+            x = cx + radius * math.cos(angle)
+            y = ring_cy + radius * math.sin(angle)
+            glow = self.create_text(x, y, text="●", fill="#1c2740",
+                                    font=self._font(dot_px * 1.55),
+                                    anchor="center")
+            dot = self.create_text(x, y, text="●", fill="#FFFFFF",
+                                   font=self._font(dot_px), anchor="center")
+            self._dots.append((glow, dot, i * (2 * math.pi / self.DOTS)))
+        self._sparkles = []
+        for i in range(4):
+            angle = -math.pi / 2 + (i + 0.5) * (2 * math.pi / 4)
+            x = cx + radius * 1.38 * math.cos(angle)
+            y = ring_cy + radius * 1.38 * math.sin(angle)
+            item = self.create_text(x, y, text="✦", fill="#2a3860",
+                                    font=self._font(dot_px * 0.55),
+                                    anchor="center")
+            self._sparkles.append((item, i * 1.9))
+        self._phase = 0.0
         self._paint()
 
     def _paint(self):
-        for i, item in enumerate(self._dots):
-            level = (i - self._head) % self.DOTS
-            ratio = 1.0 - level / float(self.DOTS)
-            value = int(60 + 195 * ratio)
+        size = self._size
+        base = max(6, size * 0.080)
+        t = self._phase
+        for glow, dot, offset in self._dots:
+            wave = 0.5 + 0.5 * math.cos(t - offset)
+            pulse = wave ** 2
+            breathe = 1.0 + 0.04 * math.sin(t * 0.7)
+            px = base * (0.68 + 0.62 * pulse) * breathe
+            value = int(65 + 190 * pulse)
             color = "#%02X%02X%02X" % (value, value, value)
+            gv = max(18, value // 6)
             try:
-                self.itemconfigure(item, fill=color)
+                self.itemconfigure(dot, fill=color, font=self._font(px))
+                self.itemconfigure(glow, fill="#%02X%02X%02X" % (gv, gv + 4, gv + 16),
+                                   font=self._font(px * 1.55))
+            except tk.TclError:
+                pass
+        for item, offset in self._sparkles:
+            tw = 0.5 + 0.5 * math.sin(t * 1.8 + offset)
+            value = int(40 + 150 * tw)
+            try:
+                self.itemconfigure(item, fill="#%02X%02X%02X" % (value, value, min(255, value + 55)))
             except tk.TclError:
                 pass
 
@@ -5057,9 +5100,13 @@ class BufferingOverlay(tk.Canvas):
         if not self._visible:
             self._job = None
             return
-        self._head = (self._head + 1) % self.DOTS
+        self._phase += 0.16
         self._paint()
-        self._job = self.after(90, self._tick)
+        self._raise_tick = (getattr(self, "_raise_tick", 0) + 1) % 10
+        if self._raise_tick == 0:
+            # VLC 的视频子窗口会周期重绘, 定期把透明层抬回最上面
+            self._raise_native()
+        self._job = self.after(33, self._tick)
 
 
 class StreamWatchView(tk.Canvas):
@@ -5192,6 +5239,15 @@ class VideoPlayerApp:
         self._fs_dock_gap = 26
         self._fs_dock_radius = 26
         self._fs_dock_rect = None
+        self._fs_chat = None
+        self._fs_chat_panel = None
+        self._fs_chat_visible = False
+        self._fs_chat_typing = False
+        self._fs_chat_rect = None
+        self._fs_chat_hide_job = None
+        self._fs_chat_anim_job = None
+        self._fs_chat_animating = False
+        self._fs_chat_width = 360
         self.fs_play_button = None
         self._tick_job = None
         self._hwnd_attached = False
@@ -5390,6 +5446,13 @@ class VideoPlayerApp:
         )
         self.open_button.pack(side=tk.LEFT, padx=(10, 0))
 
+        # 多音轨 / 字幕切换: 仅当媒体存在多音轨或字幕时显示
+        self.track_button = RoundedButton(
+            left, text="音轨 / 字幕", variant="ghost", width=112, height=36, radius=9,
+            bg=C.DECK, command=self.open_track_menu,
+            tooltip="切换音轨 / 字幕",
+        )
+
         self.back_button = RoundedButton(
             left, variant="icon", width=36, height=36, radius=9, bg=C.DECK,
             icon=lambda cv, cx, cy, s, col: icon_skip(cv, cx, cy, s, col, -1),
@@ -5493,6 +5556,7 @@ class VideoPlayerApp:
         self._last_frame_ts = 0.0
         self._buffer_job = None
         self._build_fs_dock()
+        self._build_fs_chat()
         self.root.after(500, self._watch_danmaku)
         self.root.after(1000, self._client_watchdog)
         self.root.after(300, self._buffering_tick)
@@ -5580,11 +5644,140 @@ class VideoPlayerApp:
         self._fs_dock = dock
         log.debug("全屏控制 dock 已创建")
 
+    # ---------------------------------------------------- 全屏右侧聊天面板
+    def _build_fs_chat(self):
+        """全屏时浮在屏幕右侧的聊天面板: 鼠标靠近右缘滑出, 可看消息/发消息。"""
+        chat = tk.Toplevel(self.root)
+        chat.withdraw()
+        chat.overrideredirect(True)
+        chat.configure(bg=C.BG)
+        try:
+            chat.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        panel = ChatPanel(chat, on_send=self._send_chat)
+        panel.pack(fill=tk.BOTH, expand=True)
+        panel._max_rows = self._chat_limit()
+        panel.entry.bind("<FocusIn>", self._on_fs_chat_focus_in, add="+")
+        panel.entry.bind("<FocusOut>", self._on_fs_chat_focus_out, add="+")
+        chat.bind("<Escape>", lambda _e: self._hide_fs_chat())
+        chat.bind("<Enter>", lambda _e: self._cancel_fs_chat_hide())
+        chat.bind("<Leave>", lambda _e: self._schedule_fs_chat_hide())
+        self._fs_chat = chat
+        self._fs_chat_panel = panel
+        log.debug("全屏聊天面板已创建")
+
+    def _fs_chat_size(self):
+        left, top, sw, sh = self._fs_screen_rect()
+        width = 340
+        height = max(420, sh - 48)
+        x = left + sw - width - 18
+        y = top + (sh - height) // 2
+        return width, height, x, y
+
+    def _fs_chat_show_zone(self, px):
+        try:
+            left, _top, sw, _sh = self._fs_screen_rect()
+        except tk.TclError:
+            return False
+        right = left + sw
+        return left <= px <= right and px >= right - 6
+
+    def _fs_chat_zone(self, px, py):
+        rect = self._fs_chat_rect
+        if rect is None:
+            return False
+        x, y, w, h = rect
+        return (x - 14 <= px <= x + w + 14) and (y - 14 <= py <= y + h + 14)
+
+    def _on_fs_chat_focus_in(self, _event=None):
+        self._fs_chat_typing = True
+        self._cancel_fs_chat_hide()
+
+    def _on_fs_chat_focus_out(self, _event=None):
+        self._fs_chat_typing = False
+
+    def _show_fs_chat(self):
+        chat = self._fs_chat
+        if chat is None or self._fs_chat_visible:
+            return
+        if not (self._hosting or self._client_active):
+            return
+        self._fs_chat_visible = True
+        self._cancel_fs_chat_hide()
+        width, height, x, y = self._fs_chat_size()
+        self._fs_chat_rect = (x, y, width, height)
+        try:
+            left, _top, sw, _sh = self._fs_screen_rect()
+            right = left + sw
+            chat.geometry(f"{width}x{height}+{right + 10}+{y}")
+            chat.deiconify()
+            chat.lift()
+            chat.update_idletasks()
+            round_window_corners(chat, 20)
+        except tk.TclError:
+            return
+        self._animate_fs_chat(right + 10, x)
+
+    def _hide_fs_chat(self):
+        self._fs_chat_hide_job = None
+        if not self._fs_chat_visible or self._fs_chat is None:
+            return
+        self._fs_chat_visible = False
+        self._fs_chat_rect = None
+        try:
+            left, _top, sw, _sh = self._fs_screen_rect()
+            right = left + sw
+            current = self._fs_chat.winfo_x()
+        except tk.TclError:
+            return
+        self._animate_fs_chat(current, right + 10, hide_after=True)
+
+    def _animate_fs_chat(self, start_x, end_x, hide_after=False, step=0, steps=8):
+        chat = self._fs_chat
+        if chat is None:
+            return
+        self._fs_chat_animating = True
+        step += 1
+        ease = 1.0 - (1.0 - step / steps) ** 3
+        x = int(start_x + (end_x - start_x) * ease)
+        try:
+            width, height, _x, y = self._fs_chat_size()
+            chat.geometry(f"{width}x{height}+{x}+{y}")
+        except tk.TclError:
+            self._fs_chat_animating = False
+            return
+        if step < steps:
+            self._fs_chat_anim_job = self.root.after(
+                13, lambda: self._animate_fs_chat(start_x, end_x, hide_after, step, steps))
+            return
+        self._fs_chat_anim_job = None
+        self._fs_chat_animating = False
+        if hide_after:
+            try:
+                chat.withdraw()
+            except tk.TclError:
+                pass
+
+    def _schedule_fs_chat_hide(self):
+        if self._fs_chat_hide_job is not None:
+            return
+        self._fs_chat_hide_job = self.root.after(1600, self._hide_fs_chat)
+
+    def _cancel_fs_chat_hide(self):
+        if self._fs_chat_hide_job is not None:
+            try:
+                self.root.after_cancel(self._fs_chat_hide_job)
+            except tk.TclError:
+                pass
+            self._fs_chat_hide_job = None
+
     def _fs_dock_size(self):
-        sw, sh = self._fs_screen()
+        left, top, sw, sh = self._fs_screen_rect()
         width = min(900, max(560, int(sw * 0.62)))
         height = self._fs_dock_height
-        return width, height, (sw - width) // 2, sh - self._fs_dock_gap - height
+        return (width, height, left + (sw - width) // 2,
+                top + sh - self._fs_dock_gap - height)
 
     def _fs_dock_zone(self, px, py):
         rect = self._fs_dock_rect
@@ -5593,8 +5786,34 @@ class VideoPlayerApp:
         x, y, w, h = rect
         return (x - 10 <= px <= x + w + 10) and (y - 10 <= py <= y + h + self._fs_dock_gap + 10)
 
+    def _fs_screen_rect(self):
+        """当前全屏窗口所在显示器的 (left, top, width, height), 多显示器下不越界。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetAncestor(int(self.root.winfo_id()), 2)
+            if hwnd:
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [("cbSize", wintypes.DWORD),
+                                ("rcMonitor", wintypes.RECT),
+                                ("rcWork", wintypes.RECT),
+                                ("dwFlags", wintypes.DWORD)]
+                monitor = user32.MonitorFromWindow(hwnd, 2)
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(MONITORINFO)
+                if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                    rect = info.rcMonitor
+                    return (int(rect.left), int(rect.top),
+                            max(1, int(rect.right - rect.left)),
+                            max(1, int(rect.bottom - rect.top)))
+        except Exception:
+            pass
+        return (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+
     def _fs_screen(self):
-        return (self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+        _left, _top, width, height = self._fs_screen_rect()
+        return width, height
 
     def _sync_fs_dock_labels(self):
         if self._fs_dock is None:
@@ -5618,15 +5837,26 @@ class VideoPlayerApp:
             self._fs_poll_job = None
         self._cancel_fs_hide()
         self._cancel_fs_anim()
+        self._cancel_fs_chat_hide()
+        if self._fs_chat_anim_job is not None:
+            try:
+                self.root.after_cancel(self._fs_chat_anim_job)
+            except tk.TclError:
+                pass
+            self._fs_chat_anim_job = None
+        self._fs_chat_animating = False
 
-    def _fs_show_zone(self, py):
-        """底部显示区: 覆盖控制岛目标位置上方一段, 鼠标进入必出。"""
+    def _fs_show_zone(self, px, py):
+        """底部显示区: 只在全屏窗口所在显示器内生效。"""
         try:
-            _sw, sh = self._fs_screen()
+            left, top, sw, sh = self._fs_screen_rect()
             _w, height, _x, y = self._fs_dock_size()
         except tk.TclError:
             return False
-        return py >= max(0, min(sh, y - 40))
+        right = left + sw
+        if not (left <= px <= right):
+            return False
+        return py >= max(top, min(top + sh, y - 40))
 
     def _on_fs_motion(self, event):
         if not self._fullscreen:
@@ -5635,11 +5865,17 @@ class VideoPlayerApp:
             px, py = event.x_root, event.y_root
         except Exception:
             return
-        if self._fs_show_zone(py) or self._fs_dock_zone(px, py):
+        if self._fs_show_zone(px, py) or self._fs_dock_zone(px, py):
             if not self._fs_dock_visible:
                 self._show_fs_dock()
             else:
                 self._cancel_fs_hide()
+        if self._fs_chat is not None and (self._hosting or self._client_active):
+            if self._fs_chat_show_zone(px) or self._fs_chat_zone(px, py):
+                if not self._fs_chat_visible:
+                    self._show_fs_chat()
+                else:
+                    self._cancel_fs_chat_hide()
 
     def _fs_watch(self):
         self._fs_poll_job = None
@@ -5649,7 +5885,7 @@ class VideoPlayerApp:
             px, py = self.root.winfo_pointerxy()
         except tk.TclError:
             return
-        show_zone = self._fs_show_zone(py)
+        show_zone = self._fs_show_zone(px, py)
         dock_zone = self._fs_dock_zone(px, py)
         if not self._fs_dock_visible:
             if show_zone or dock_zone:
@@ -5659,6 +5895,17 @@ class VideoPlayerApp:
                 self._cancel_fs_hide()
             else:
                 self._schedule_fs_hide()
+        if self._fs_chat is not None and (self._hosting or self._client_active):
+            chat_show = self._fs_chat_show_zone(px)
+            chat_zone = self._fs_chat_zone(px, py)
+            if not self._fs_chat_visible:
+                if chat_show or chat_zone:
+                    self._show_fs_chat()
+            else:
+                if chat_zone or chat_show or self._fs_chat_typing:
+                    self._cancel_fs_chat_hide()
+                else:
+                    self._schedule_fs_chat_hide()
         self._fs_poll_job = self.root.after(80, self._fs_watch)
 
     def _schedule_fs_hide(self):
@@ -5692,15 +5939,16 @@ class VideoPlayerApp:
         width, height, x, y = self._fs_dock_size()
         self._fs_dock_rect = (x, y, width, height)
         try:
-            sw, sh = self._fs_screen()
-            dock.geometry(f"{width}x{height}+{x}+{sh + 10}")
+            _left, top, _sw, sh = self._fs_screen_rect()
+            hidden_y = top + sh + 10
+            dock.geometry(f"{width}x{height}+{x}+{hidden_y}")
             dock.deiconify()
             dock.lift()
             dock.update_idletasks()
             round_window_corners(dock, self._fs_dock_radius)
         except tk.TclError:
             return
-        self._animate_fs_dock(sh + 10, y)
+        self._animate_fs_dock(hidden_y, y)
 
     def _hide_fs_dock(self):
         self._fs_hide_job = None
@@ -5709,11 +5957,12 @@ class VideoPlayerApp:
         self._fs_dock_visible = False
         self._fs_dock_rect = None
         try:
-            _sw, sh = self._fs_screen()
+            _left, top, _sw, sh = self._fs_screen_rect()
+            hidden_y = top + sh + 10
             current = self._fs_dock.winfo_y()
         except tk.TclError:
             return
-        self._animate_fs_dock(current, sh + 10, hide_after=True)
+        self._animate_fs_dock(current, hidden_y, hide_after=True)
 
     def _animate_fs_dock(self, start_y, end_y, hide_after=False, step=0, steps=8):
         dock = self._fs_dock
@@ -5766,8 +6015,8 @@ class VideoPlayerApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _on_root_focus_out(self, _event=None):
-        """切到别的程序时收起全屏 dock(点在 dock 上时不算)。"""
-        if not self._fullscreen or not self._fs_dock_visible:
+        """切到别的程序时收起全屏 dock/聊天(指针还在面板上时不算)。"""
+        if not self._fullscreen or (not self._fs_dock_visible and not self._fs_chat_visible):
             return
         try:
             px, py = self.root.winfo_pointerxy()
@@ -5775,6 +6024,8 @@ class VideoPlayerApp:
             return
         if not self._fs_dock_zone(px, py):
             self._hide_fs_dock()
+        if not self._fs_chat_zone(px, py) and not self._fs_chat_show_zone(px):
+            self._hide_fs_chat()
 
     def _shortcut(self, action):
         # 避免在输入框里按空格等键时误触发
@@ -5951,6 +6202,11 @@ class VideoPlayerApp:
         self._chat_last_sent = {}
         self.chat_panel._max_rows = self._chat_limit()
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         log.info("开始主持流式: TCP 指令端口 %d, 媒体端口 %d, 房间密码 %s",
@@ -6001,6 +6257,11 @@ class VideoPlayerApp:
         self._chat_messages = []
         self._chat_last_sent = {}
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         self._host_password = ""
@@ -6605,6 +6866,11 @@ class VideoPlayerApp:
             self.chat_panel.add_message(message, mine=mine)
         except tk.TclError:
             pass
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.add_message(message, mine=mine)
+        except tk.TclError:
+            pass
 
     def _sync_chat_panel(self):
         try:
@@ -6614,6 +6880,10 @@ class VideoPlayerApp:
                     self.chat_panel.pack(side=tk.RIGHT, fill=tk.Y)
             else:
                 self.chat_panel.pack_forget()
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel._max_rows = self._chat_limit()
+            if not (self._hosting or self._client_active):
+                self._hide_fs_chat()
             self._schedule_danmaku_sync()
         except (tk.TclError, AttributeError):
             pass
@@ -6868,6 +7138,11 @@ class VideoPlayerApp:
         self._chat_messages = []
         self.chat_panel._max_rows = self._chat_limit()
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         self.root.title(f"同步播放 — {APP_TITLE}")
@@ -6918,6 +7193,11 @@ class VideoPlayerApp:
         self._sync_members_button()
         self._chat_messages = []
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         self.root.title(APP_TITLE)
@@ -7036,6 +7316,14 @@ class VideoPlayerApp:
     def _dispose_player_async(self, player):
         """在后台线程回收旧播放器: libvlc 停止 UDP 输入偶尔会阻塞很久,
         放在 UI 线程里会直接把窗口卡死。"""
+        # 先立即静音 + 暂停, 避免后台 stop() 阻塞期间旧播放器继续出声,
+        # 换片/重连时出现"两份声音"。
+        try:
+            player.audio_set_mute(True)
+            player.set_pause(1)
+        except Exception:
+            log.debug("静音旧播放器失败", exc_info=True)
+
         def worker():
             try:
                 player.stop()
@@ -7179,6 +7467,7 @@ class VideoPlayerApp:
             self._schedule_danmaku_sync()
             self.watch_view.pack_forget()
             self._show_buffering()
+            self.root.after(900, self._update_track_button)
             log.info("客户端开始接收并渲染流: %s", url)
         except Exception:
             log.exception("客户端流渲染启动失败")
@@ -7303,6 +7592,12 @@ class VideoPlayerApp:
             self._trim_chat_history()
             self.chat_panel.set_messages(self._chat_messages,
                                          self._client_id or "")
+            try:
+                if self._fs_chat_panel is not None:
+                    self._fs_chat_panel.set_messages(self._chat_messages,
+                                                     self._client_id or "")
+            except tk.TclError:
+                pass
         elif message_type == "kicked":
             reason = str(message.get("reason") or "你已被主持移出房间")
             log.info("被主持移出房间: %s", reason)
@@ -7529,7 +7824,7 @@ class VideoPlayerApp:
             return
         try:
             args = ["--no-video-title-show", "--quiet",
-                    "--no-spu", "--no-sub-autodetect-file"]
+                    "--no-sub-autodetect-file"]
             mode = self.settings.get("decode_mode", "auto")
             if mode == "hardware":
                 args.append("--avcodec-hw=any")
@@ -7701,9 +7996,16 @@ class VideoPlayerApp:
         ANIMATIONS_ENABLED = bool(settings.get("animations", True))
         self._trim_chat_history()
         self.chat_panel._max_rows = self._chat_limit()
+        if self._fs_chat_panel is not None:
+            self._fs_chat_panel._max_rows = self._chat_limit()
         if self._hosting:
             try:
                 self.chat_panel.set_messages(self._chat_messages, "host")
+            except tk.TclError:
+                pass
+            try:
+                if self._fs_chat_panel is not None:
+                    self._fs_chat_panel.set_messages(self._chat_messages, "host")
             except tk.TclError:
                 pass
         if self.danmaku is not None:
@@ -7801,6 +8103,8 @@ class VideoPlayerApp:
         self._session_files += 1
         self.player.play()
         self.player.set_rate(self._current_rate())
+        self.root.after(700, self._ensure_single_audio_track)
+        self.root.after(900, self._update_track_button)
         if not self.settings.get("autoplay", True):
             self.player.pause()
             log.info("设置: 打开文件后不自动播放")
@@ -8052,6 +8356,13 @@ class VideoPlayerApp:
             except tk.TclError:
                 pass
         self._fs_dock_visible = False
+        if self._fs_chat is not None:
+            try:
+                self._fs_chat.withdraw()
+            except tk.TclError:
+                pass
+        self._fs_chat_visible = False
+        self._fs_chat_rect = None
         self._start_fs_watch()
         self.root.after(60, lambda: apply_dark_titlebar(self.root))
         log.info("进入全屏 (恢复尺寸 %s)", self._saved_geometry)
@@ -8067,6 +8378,13 @@ class VideoPlayerApp:
             except tk.TclError:
                 pass
         self._fs_dock_visible = False
+        if self._fs_chat is not None:
+            try:
+                self._fs_chat.withdraw()
+            except tk.TclError:
+                pass
+        self._fs_chat_visible = False
+        self._fs_chat_rect = None
         self.root.attributes("-fullscreen", False)
         if self._saved_geometry:
             self.root.geometry(self._saved_geometry)
@@ -8089,6 +8407,10 @@ class VideoPlayerApp:
             if self._client_active:
                 self._client_retry_reconnect()
             self._refresh_state()
+            now = time.monotonic()
+            if now - getattr(self, "_last_track_check", 0.0) >= 1.0:
+                self._last_track_check = now
+                self._update_track_button()
         finally:
             self._schedule_tick()
 
@@ -8142,6 +8464,157 @@ class VideoPlayerApp:
             if now - self._last_state_push >= 1.0:
                 self._last_state_push = now
                 self._broadcast_state()
+
+    def _ensure_single_audio_track(self):
+        """多音轨媒体只保留第一条音轨, 避免出现两条音轨叠着响。"""
+        if self.player is None or self._client_active:
+            return
+        try:
+            count = self.player.audio_get_track_count()
+        except Exception:
+            return
+        if count <= 1:
+            return
+        try:
+            desc = self.player.audio_get_track_description() or []
+            tracks = [entry for entry in desc if entry and entry[0] > 0]
+            if not tracks:
+                return
+            current = self.player.audio_get_track()
+            if current != tracks[0][0]:
+                self.player.audio_set_track(tracks[0][0])
+                log.info("多音轨媒体: 已固定第一条音轨 %s", tracks[0][1])
+        except Exception:
+            log.debug("选择音轨失败", exc_info=True)
+
+    def _track_display_name(self, name):
+        if isinstance(name, bytes):
+            name = name.decode("utf-8", "ignore")
+        name = str(name or "").strip()
+        return name or "默认"
+
+    def _audio_track_entries(self):
+        if self.player is None:
+            return []
+        try:
+            desc = self.player.audio_get_track_description() or []
+        except Exception:
+            return []
+        entries = []
+        for tid, name in desc:
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue
+            if tid > 0:
+                entries.append((tid, self._track_display_name(name)))
+        return entries
+
+    def _subtitle_entries(self):
+        if self.player is None:
+            return []
+        try:
+            desc = self.player.video_get_spu_description() or []
+        except Exception:
+            return []
+        entries = []
+        for tid, name in desc:
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue
+            if tid > 0:
+                entries.append((tid, self._track_display_name(name)))
+        return entries
+
+    def _update_track_button(self):
+        if self.player is None or (self.current_path is None and not self._client_active):
+            self._hide_track_button()
+            return
+        show = len(self._audio_track_entries()) > 1 or len(self._subtitle_entries()) > 0
+        try:
+            mapped = bool(self.track_button.winfo_ismapped())
+        except tk.TclError:
+            mapped = False
+        if show and not mapped:
+            try:
+                self.track_button.pack(side=tk.LEFT, padx=(10, 0),
+                                       before=self.back_button)
+            except tk.TclError:
+                pass
+        elif not show and mapped:
+            self.track_button.pack_forget()
+
+    def _hide_track_button(self):
+        try:
+            if self.track_button.winfo_ismapped():
+                self.track_button.pack_forget()
+        except tk.TclError:
+            pass
+
+    def open_track_menu(self):
+        if self.player is None or (self.current_path is None and not self._client_active):
+            return
+        audio = self._audio_track_entries()
+        subs = self._subtitle_entries()
+        if not audio and not subs:
+            return
+        menu = tk.Menu(self.root, tearoff=0, bg=C.SURFACE, fg=C.TEXT,
+                       activebackground=C.ACCENT, activeforeground="#0B0F1A",
+                       relief=tk.FLAT, bd=0, font=ui_font(10))
+        try:
+            if audio:
+                menu.add_command(label="音频", state=tk.DISABLED)
+                try:
+                    current = int(self.player.audio_get_track())
+                except Exception:
+                    current = -1
+                for tid, name in audio:
+                    mark = "✓ " if tid == current else "   "
+                    menu.add_command(label=mark + name,
+                                     command=lambda t=tid: self._set_audio_track(t))
+            if subs:
+                if audio:
+                    menu.add_separator()
+                menu.add_command(label="字幕", state=tk.DISABLED)
+                try:
+                    current = int(self.player.video_get_spu())
+                except Exception:
+                    current = -1
+                mark = "✓ " if current < 0 else "   "
+                menu.add_command(label=mark + "关闭字幕",
+                                 command=lambda: self._set_subtitle(-1))
+                for tid, name in subs:
+                    mark = "✓ " if tid == current else "   "
+                    menu.add_command(label=mark + name,
+                                     command=lambda t=tid: self._set_subtitle(t))
+            x = self.track_button.winfo_rootx()
+            y = self.track_button.winfo_rooty() + self.track_button.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except tk.TclError:
+                pass
+            self.root.after(50, menu.destroy)
+
+    def _set_audio_track(self, tid):
+        try:
+            self.player.audio_set_track(int(tid))
+            log.info("切换音轨: %s", tid)
+            self._set_status("已切换音轨", "ok")
+        except Exception:
+            log.exception("切换音轨失败")
+        self._update_track_button()
+
+    def _set_subtitle(self, tid):
+        try:
+            self.player.video_set_spu(int(tid))
+            log.info("切换字幕: %s", tid)
+            self._set_status("已关闭字幕" if int(tid) < 0 else "已切换字幕", "ok")
+        except Exception:
+            log.exception("切换字幕失败")
+        self._update_track_button()
 
     def _log_media_details(self):
         width = height = 0
