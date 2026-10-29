@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nobplaypot — 局域网同步观影播放器</title>
+<meta name="description" content="Nobplaypot 是一个为 Windows 打造的深色视频播放器，支持局域网多人同步观看、房间密码、成员管理、聊天与弹幕。1x 播放走 VLC 流复制，几乎零延迟、零转码。">
+<meta name="author" content="Nobri with deepseek">
+<meta property="og:title" content="Nobplaypot — 局域网同步观影播放器">
+<meta property="og:description" content="把一场电影，同步给整个房间。VLC + Tkinter 打造的 Windows 深色播放器，支持局域网同步观看。">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0b0f19">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0f19'/%3E%3Ccircle cx='32' cy='32' r='19' fill='%236c8bff'/%3E%3Cpath d='M27 23l15 9-15 9z' fill='%230b0f19'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="nav" id="top">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="Nobplaypot 首页">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><path d="M9.6 7.4l7.2 4.6-7.2 4.6z" fill="currentColor"/></svg>
+      </span>
+      <span class="brand-name">Nobplaypot</span>
+      <span class="brand-ver">v1.2.0</span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#features">功能</a>
+      <a href="#how">原理</a>
+      <a href="#screenshots">截图</a>
+      <a href="#download">下载</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <div class="nav-actions">
+      <a class="btn btn-ghost btn-sm" href="https://github.com/Nobri6039/Nobplaypot" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.15c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/Nobri6039/Nobplaypot/releases" target="_blank" rel="noopener">下载</a>
+      <button class="nav-toggle" id="navToggle" aria-label="打开菜单" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="container hero-grid">
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span class="dot"></span> LAN CO-WATCHING · WINDOWS</p>
+        <h1>把一场电影，<br><span class="grad-text">同步给整个房间。</span></h1>
+        <p class="hero-tagline">Nobplaypot 是一个用 <strong>VLC + Tkinter</strong> 打造的 Windows 深色视频播放器。一台电脑主持，其他人加入，播放、暂停、拖动、变速全部实时同步。</p>
+        <div class="hero-btns">
+          <a class="btn btn-primary btn-lg" href="https://github.com/Nobri6039/Nobplaypot/releases" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+            下载最新版
+          </a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/Nobri6039/Nobplaypot" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.15c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
+            查看源码
+          </a>
+        </div>
+        <ul class="hero-chips">
+          <li>Windows 10 / 11</li>
+          <li>VLC 3.x</li>
+          <li>Python 3.10+</li>
+          <li>MIT License</li>
+        </ul>
+      </div>
+      <div class="hero-shot reveal reveal-delay-1">
+        <div class="window-frame">
+          <div class="window-bar"><span></span><span></span><span></span></div>
+          <img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/main.png" alt="Nobplaypot 主界面" width="1280" height="800" loading="eager">
+        </div>
+        <div class="hero-shot-glow" aria-hidden="true"></div>
+      </div>
+    </div>
+    <div class="container stats reveal">
+      <div class="stat"><strong>400ms</strong><span>默认客户端缓冲</span></div>
+      <div class="stat"><strong>1x</strong><span>零转码流复制</span></div>
+      <div class="stat"><strong>32</strong><span>人房间上限</span></div>
+      <div class="stat"><strong>5 × 3</strong><span>主题 × 底色</span></div>
+    </div>
+  </section>
+
+  <section class="section" id="features">
+    <div class="container">
+      <header class="section-head reveal">
+        <p class="eyebrow">FEATURES</p>
+        <h2>不只是播放器，<span class="grad-text">是一间同步放映厅。</span></h2>
+        <p class="section-sub">从主持、加入、密码、成员、聊天、弹幕到全屏，全部围绕“一起看”这一件事设计。</p>
+      </header>
+      <div class="feature-grid">
+        <article class="card reveal"><div class="card-icon">▶</div><h3>局域网同步观影</h3><p>主持端打开视频即可开房，客户端填入主持地址加入；文件、进度、暂停、倍速实时同步。</p></article>
+        <article class="card reveal"><div class="card-icon">⚡</div><h3>1x 零转码</h3><p>正常速度下直接把源文件的 H.264/AAC 复用到 TS 发出，不重新编码，几乎没有编码延迟与 CPU 占用。</p></article>
+        <article class="card reveal"><div class="card-icon">⟳</div><h3>拖动 / 变速</h3><p>客户端拖动只发指令；主持端在目标进度重建推流，成员变化也会保留当前进度，不会回到片头。</p></article>
+        <article class="card reveal"><div class="card-icon">🔒</div><h3>房间密码</h3><p>可选密码，只保存在主持端，客户端提交后由主持校验；常量时间比较，单连接限次尝试。</p></article>
+        <article class="card reveal"><div class="card-icon">👥</div><h3>成员与踢出</h3><p>成员列表实时同步，按加入顺序排列；主持可移除房客，房客离开不会打断其他人的播放。</p></article>
+        <article class="card reveal"><div class="card-icon">💬</div><h3>聊天 + 弹幕</h3><p>右侧聊天面板与主持端消息记录；新消息以弹幕从右向左飘过视频，窗口与全屏都生效。</p></article>
+        <article class="card reveal"><div class="card-icon">◌</div><h3>缓冲提示</h3><p>播放按钮是“播放中”但画面帧数不再增长时，视频中央显示旋转圆点；大小随视频区与设置缩放。</p></article>
+        <article class="card reveal"><div class="card-icon">⛶</div><h3>全屏控制岛</h3><p>鼠标靠近屏幕底部，浮出与边缘不接触的圆角控制条；播放、进度、音量、倍速、退出全屏一应俱全。</p></article>
+        <article class="card reveal"><div class="card-icon">🎨</div><h3>手绘深色 UI</h3><p>按钮、滑块、下拉、文件列表、对话框全部 Canvas 绘制；抗锯齿圆角、图标、悬停动画。</p></article>
+        <article class="card reveal"><div class="card-icon">🌙</div><h3>主题系统</h3><p>5 套强调色 × 3 种界面底色，深色标题栏与圆角窗口，长时间观影不刺眼。</p></article>
+        <article class="card reveal"><div class="card-icon">📦</div><h3>免安装便携版</h3><p>内置最小 Python 运行时与最小 VLC 运行库，双击即用，无需另装 Python 或 VLC。</p></article>
+        <article class="card reveal"><div class="card-icon">🛡</div><h3>稳定与自恢复</h3><p>VLC 阻塞调用全部放到后台线程；客户端看门狗在画面卡死时自动重启本机解码。</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="how">
+    <div class="container">
+      <header class="section-head reveal">
+        <p class="eyebrow">HOW IT WORKS</p>
+        <h2>三步开一场<span class="grad-text">同步放映。</span></h2>
+        <p class="section-sub">指令与媒体分开：指令走可靠的 TCP，媒体走低延迟的 UDP；客户端收到的 TS 原包直接交给本机 VLC。</p>
+      </header>
+      <div class="steps">
+        <div class="step reveal"><span class="step-num">01</span><h3>主持开场</h3><p>打开视频，点“主持流式传输”，设置指令端口与媒体端口，输入房间密码，开始主持。</p></div>
+        <div class="step reveal"><span class="step-num">02</span><h3>房间加入</h3><p>客户端填入主持的指令地址和媒体地址；如有密码，输入后由主持校验，通过才真正进入房间。</p></div>
+        <div class="step reveal"><span class="step-num">03</span><h3>实时同步</h3><p>主持的播放、暂停、拖动、倍速广播给所有人；客户端只发指令，画面由本地 VLC 渲染。</p></div>
+      </div>
+      <div class="arch reveal">
+        <div class="arch-col">
+          <h3>指令通道</h3>
+          <p class="arch-badge">TCP · 换行 JSON</p>
+          <p>心跳、房间状态、密码校验、聊天、成员、播放控制。断线自动重连，离线判定可配置。</p>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-col">
+          <h3>媒体通道</h3>
+          <p class="arch-badge">UDP · TS 原包</p>
+          <p>1x 时主持端复制源 ES 到 TS，经 UDP 发送；客户端注册后接收原包，交给本机 VLC 负责抖动、乱序与缓冲。</p>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-col">
+          <h3>本机渲染</h3>
+          <p class="arch-badge">VLC · libvlc</p>
+          <p>画面直接渲染到播放器窗口；全屏、弹幕、缓冲提示都在同一层叠加，不打断解码。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="screenshots">
+    <div class="container">
+      <header class="section-head reveal">
+        <p class="eyebrow">SCREENSHOTS</p>
+        <h2>看看它<span class="grad-text">实际的样子。</span></h2>
+        <p class="section-sub">点击任意截图可放大查看。</p>
+      </header>
+      <div class="gallery">
+        <figure class="shot reveal"><img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/fullscreen-dock.png" alt="全屏控制岛" loading="lazy"><figcaption>全屏控制岛</figcaption></figure>
+        <figure class="shot reveal"><img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/chat_main_host.png" alt="房间聊天" loading="lazy"><figcaption>房间聊天</figcaption></figure>
+        <figure class="shot reveal"><img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/danmaku_window.png" alt="弹幕" loading="lazy"><figcaption>弹幕</figcaption></figure>
+        <figure class="shot reveal"><img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/settings.png" alt="设置 · 流式传输" loading="lazy"><figcaption>设置 · 流式传输</figcaption></figure>
+        <figure class="shot reveal"><img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/room_members_host.png" alt="房间成员" loading="lazy"><figcaption>房间成员</figcaption></figure>
+        <figure class="shot reveal"><img src="https://raw.githubusercontent.com/Nobri6039/Nobplaypot/main/screenshots/theme-violet.png" alt="紫罗兰主题" loading="lazy"><figcaption>紫罗兰主题</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="download">
+    <div class="container">
+      <header class="section-head reveal">
+        <p class="eyebrow">DOWNLOAD</p>
+        <h2>选一种方式<span class="grad-text">开始。</span></h2>
+        <p class="section-sub">推荐直接下载 Releases 里的免安装包；也可以从源码运行。</p>
+      </header>
+      <div class="download-grid">
+        <article class="dl-card reveal">
+          <h3>免安装便携版</h3>
+          <p>内置最小 Python 运行时与最小 VLC 运行库，解压后双击启动，无需安装 Python 或 VLC。</p>
+          <a class="btn btn-primary btn-block" href="https://github.com/Nobri6039/Nobplaypot/releases" target="_blank" rel="noopener">前往 Releases 下载</a>
+          <p class="dl-note">Windows 10 / 11 · 64 位</p>
+        </article>
+        <article class="dl-card reveal">
+          <h3>从源码运行</h3>
+          <p>需要 Python 3.10+ 与 64 位 VLC 3.x；安装依赖后直接运行主程序。</p>
+          <pre class="code"><code>git clone https://github.com/Nobri6039/Nobplaypot.git
+cd Nobplaypot
+pip install python-vlc tkinterdnd2
+python Nobplaypot.py</code></pre>
+          <a class="btn btn-ghost btn-block" href="https://github.com/Nobri6039/Nobplaypot" target="_blank" rel="noopener">打开仓库</a>
+        </article>
+      </div>
+      <div class="reqs reveal">
+        <h3>运行要求</h3>
+        <ul>
+          <li><strong>系统</strong>：Windows 10 / 11（64 位）</li>
+          <li><strong>Python</strong>：3.10+（开发环境 3.15 / Tk 9.0）</li>
+          <li><strong>VLC</strong>：3.x 桌面版（64 位）；便携版已内置最小运行库</li>
+          <li><strong>依赖</strong>：python-vlc、tkinterdnd2</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="faq">
+    <div class="container narrow">
+      <header class="section-head reveal">
+        <p class="eyebrow">FAQ</p>
+        <h2>常见问题</h2>
+      </header>
+      <details class="faq reveal">
+        <summary>为什么局域网加入后是黑屏？</summary>
+        <p>最常见的是主持端防火墙没有放行媒体端口。主持端需要允许 <strong>TCP 指令端口</strong> 和 <strong>UDP 媒体端口</strong> 的入站；客户端只做出站连接。放行后重新加入即可。</p>
+      </details>
+      <details class="faq reveal">
+        <summary>为什么延迟感觉比较大？</summary>
+        <p>延迟主要来自客户端缓冲。默认客户端缓冲是 <strong>400ms</strong>，可在 <strong>设置 → 流式传输 → 客户端缓冲</strong> 里调整（200–5000ms）。1x 播放没有编码器，缓冲调小后延迟会明显下降。</p>
+      </details>
+      <details class="faq reveal">
+        <summary>为什么有人加入时主持会短暂重连？</summary>
+        <p>VLC 的推流目标在 media 创建时固定，成员变化需要重建 media。重建会自动保留当前进度，不会回到片头；客户端会短暂显示缓冲后继续。</p>
+      </details>
+      <details class="faq reveal">
+        <summary>支持公网一起看吗？</summary>
+        <p>支持。在主持端把 <strong>TCP 指令端口</strong> 和 <strong>UDP 媒体端口</strong> 映射到公网并放行防火墙，客户端填公网地址即可；客户端仍然只需要出站连接。</p>
+      </details>
+      <details class="faq reveal">
+        <summary>1x 播放会改变画质吗？</summary>
+        <p>不会。1x 是流复制，画面就是源文件本身的编码与分辨率。分辨率、码率、帧率这些设置只在变速（非 1x）转码时生效。</p>
+      </details>
+      <details class="faq reveal">
+        <summary>需要安装 VLC 或 Python 吗？</summary>
+        <p>使用便携版不需要，运行时已内置。从源码运行则需要 Python 3.10+ 与 64 位 VLC 3.x。</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container footer-grid">
+    <div class="footer-brand">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><path d="M9.6 7.4l7.2 4.6-7.2 4.6z" fill="currentColor"/></svg>
+        </span>
+        <span class="brand-name">Nobplaypot</span>
+      </div>
+      <p>把一场电影，同步给整个房间。</p>
+      <p class="footer-author">作者：<strong>Nobri with deepseek</strong></p>
+    </div>
+    <div class="footer-links">
+      <h4>项目</h4>
+      <a href="https://github.com/Nobri6039/Nobplaypot" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a href="https://github.com/Nobri6039/Nobplaypot/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/Nobri6039/Nobplaypot/blob/main/RELEASE_NOTES_v1.2.0.md" target="_blank" rel="noopener">更新说明</a>
+      <a href="https://github.com/Nobri6039/Nobplaypot/blob/main/README.md" target="_blank" rel="noopener">English README</a>
+    </div>
+    <div class="footer-links">
+      <h4>文档</h4>
+      <a href="https://github.com/Nobri6039/Nobplaypot/blob/main/README.zh-CN.md" target="_blank" rel="noopener">中文 README</a>
+      <a href="https://github.com/Nobri6039/Nobplaypot/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      <a href="https://www.videolan.org/" target="_blank" rel="noopener">VLC media player</a>
+      <a href="https://github.com/oaubert/python-vlc" target="_blank" rel="noopener">python-vlc</a>
+    </div>
+  </div>
+  <div class="container footer-bottom">
+    <p>© <span id="year">2026</span> Nobri with deepseek · 以 MIT 许可发布</p>
+    <p>内置 VLC 运行库遵循其 GPLv2+ 许可。</p>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="查看截图" hidden>
+  <button class="lightbox-close" id="lightboxClose" aria-label="关闭">×</button>
+  <img id="lightboxImg" src="" alt="">
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

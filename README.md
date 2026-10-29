@@ -1,5 +1,7 @@
 **English** | [中文](README.zh-CN.md)
 
+🌐 **Website**: https://nobri6039.github.io/Nobplaypot/
+
 # Nobplaypot
 
 A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, made for LAN co-watching: host a stream, let others join, protect the room with a password, and control playback / seeking / speed remotely.
