@@ -220,9 +220,8 @@ Nobplaypot/
 
 ## Roadmap
 
-1. UUID-based identity
-2. Expand to more system platforms
-3. Smoother sync and more feature extensions
+1. Expand to more system platforms
+2. Smoother sync and more feature extensions
 
 ## Acknowledgements
 
