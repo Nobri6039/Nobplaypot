@@ -66,10 +66,11 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - Play / pause, skip back / forward, progress, volume, speed, exit fullscreen
 - Slides away 1.6 seconds after the mouse leaves
 
-### Streaming (LAN)
-- **Host**: opens a TCP command port (default 5000) and a UDP stream port (default 5001), transcodes the picture to H.264/TS and pushes it to clients
-- **Join**: enter the host's command address and your local receiving address; your VLC renders the incoming UDP stream directly
-- **Resilient playback**: a 2 s receive buffer and frequent keyframes keep the picture alive under jitter; if the UDP input stalls, the client automatically reconnects the stream within a few seconds (buffer adjustable in **Settings → Streaming**)
+### Streaming (LAN / internet)
+- **Host**: opens a TCP command port (default 5000) and a UDP media port (default 5001). At **1x** the host **stream-copies** the source's video/audio ES into TS and sends it over UDP to a local relay; a thin distributor forwards the raw TS datagrams to every registered client. Only non-1x speeds re-encode, using x264 `tune=zerolatency`
+- **Join**: enter the host's command address and the **host's UDP media address** (e.g. `192.168.1.10:5001`). The client sends a small UDP registration packet; the host replies with the raw TS datagrams, which the client re-emits to a local VLC. No client inbound port is needed
+- **Low latency**: the default client buffer is **400 ms** (200–5000 ms in settings). At 1x there is no encoder in the path, so loopback/LAN delay is essentially the client cache plus the network
+- **Resilient playback**: the client VLC owns jitter, reordering and buffering; a watchdog restarts the local picture if the displayed-frame count stops advancing; a rotating-dot buffering overlay appears whenever the play button says "playing" and the picture is not advancing
 - State sync: file, position, duration, pause, speed; clients can remotely play / pause / seek / change speed, while volume and mute stay local
 - Room size and member list sync in real time, up to 32 people (configurable)
 
@@ -97,7 +98,8 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 ### Seeking / speed changes while streaming
 - Client seeks are never handled locally; the command is sent to the host
 - On a seek or speed change the host: **stops the current stream → rebuilds it from the new position / speed using `:start-time` / `:rate` → broadcasts `resync` → clients reconnect**
-- The stream timeline restarts from 0; clients are back within about a second
+- At 1x the rebuilt stream is still a **stream copy**; only non-1x rates re-encode
+- The stream timeline restarts from 0; clients are back within about a second (or one source keyframe)
 
 ## Requirements
 
@@ -152,17 +154,17 @@ No Python or VLC installation is required for the portable release. The bundled 
 ### Host a streaming session
 1. Open the video you want to watch;
 2. Click the stream button at the bottom-left → **Host stream**;
-3. Enter the command and stream ports (default 5000 / 5001);
+3. Enter the command port (TCP, default 5000) and the media port (UDP, default 5001);
 4. "Enable room password" is on by default — enter a password (or turn it off for an open room);
 5. Click **Start hosting**.
 
 ### Join a session
 1. Click the stream button → **Join stream**;
 2. Command address: the host's IP:port (e.g. `192.168.1.10:5000`);
-3. Stream address: the **local** UDP receiving address (e.g. `192.168.1.20:5001`);
+3. Stream address: the **host's UDP media address** (e.g. `192.168.1.10:5001`); the client sends a UDP registration packet and receives the raw TS, so no local listen port is needed;
 4. If the room has a password, a password dialog appears; enter the correct password to join.
 
-> LAN is the easiest setup. For the internet, forward the TCP command port and the UDP stream port on the host's router and allow them through the firewall; UDP packet loss over the internet also affects playback quality.
+> LAN is the easiest setup. For the internet, map the host's **TCP** command port and the host's **UDP** media port on the host's router / firewall; clients only send outbound traffic. If the public mapped port differs from the local one, fill the public address on the client.
 
 ### Settings
 Open settings with the gear button at the bottom-right. There are four pages:
@@ -170,9 +172,9 @@ Open settings with the gear button at the bottom-right. There are four pages:
 - **General**: decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
 - **Appearance**: accent color, background tone, hover animations (colors apply after restart)
 - **Chat room**: username, member message rate limit, chat history limit, danmaku on/off, size, speed, color, area
-- **Streaming**: max room size, per-client bandwidth, streaming resolution (480p / 720p / 1080p / native), frame rate, audio bitrate, x264 preset, keyframe interval, client buffer, heartbeat interval, offline timeout, default ports
+- **Streaming**: max room size, per-client bandwidth / resolution / frame rate / audio bitrate / x264 preset / keyframe interval (these only take effect when re-encoding, i.e. **non-1x speed**), client buffer (default **400 ms**, 200–5000 ms), buffering-icon scale (0.5x–2.5x), heartbeat interval, offline timeout, default ports
 
-Settings are stored in `%APPDATA%\Nobplaypot\config.json`. Streaming changes apply on the next stream rebuild (client join / seek / speed change).
+Settings are stored in `%APPDATA%\Nobplaypot\config.json`. At **1x** the stream is a copy, so resolution/bitrate/frame rate do not change the picture; client buffer and buffering-icon scale apply immediately. Seeking, speed changes and membership changes rebuild the stream (the current position is preserved).
 
 ## Data & Logs
 
@@ -188,16 +190,18 @@ Log-related environment variables:
 
 ## Implementation notes
 
-- **Command channel**: TCP + newline-delimited JSON; heartbeat every 2 seconds, offline after 8 seconds without messages
-- **Stream channel**: UDP (TS), with the host transcoding to H.264 + AAC through libvlc's `sout`
-- **Seek / speed**: libvlc's sout chain breaks permanently on an in-place `seek`, so the host stops the stream, rebuilds it with `:start-time` / `:rate`, broadcasts `resync`, and lets clients reconnect
+- **Command channel**: TCP + newline-delimited JSON; heartbeat every 2 seconds, offline after 12 seconds without messages; the initial connect runs on a background thread so the UI never freezes on DNS/connect
+- **Stream channel**: at 1x the host's libvlc `sout` **copies** the source's video/audio ES into TS over UDP to a local relay; a thin Python distributor forwards the raw TS datagrams to registered clients; each client re-emits them to a local VLC for rendering. No custom framing, sequence numbers, FEC or NACK — the client VLC handles jitter, reordering and buffering. Only rate ≠ 1x builds the x264 `tune=zerolatency` transcode chain
+- **Seek / speed / membership**: libvlc's sout destination list is fixed at media creation, so a seek or a roster change rebuilds the media; the rebuild re-applies the current position with `:start-time` and `set_time` (and the rate with `:rate`), then broadcasts `resync`; the stream timeline restarts from 0 for clients
+- **Buffering indicator**: the client polls `libvlc_media_get_stats().displayed_pictures` every 250 ms. If the play/pause button says "playing" and the displayed-frame count has not advanced for 450 ms (or is still 0), a transparent rotating-dot overlay is shown; it scales with the video area and the user's buffering-icon scale setting
 - **Password**: verified by the host before a client is registered (`hmac.compare_digest`); unauthenticated connections never enter the room, count toward the room size, or receive the stream
-- **Stability**: libvlc can block for a long time when stopping UDP input or releasing a player, so those calls run on background threads and never on the UI thread; a UI watchdog records stalls
+- **Stability**: libvlc can block for a long time when stopping input or releasing a player, so those calls run on background threads and never on the UI thread; a client-side watchdog restarts the local decoder if the picture stalls
 
 ## Known limitations
 
-- Seeking or changing speed while streaming briefly reconnects clients (the stream chain must be rebuilt)
-- Transcoding uses CPU; lower the resolution / bitrate / frame rate if needed, and note that speed + streaming is more demanding
+- At 1x the picture is the source's own codec/resolution; a source with a very long keyframe interval starts and seeks slower because the client must wait for a keyframe
+- Seeking, speed changes and membership changes briefly reconnect clients (the sout must be rebuilt); the position is preserved
+- CPU is used only for non-1x speed; 4K/high-bitrate sources are limited by the client's decoder and the network
 - One host = one room; designed mainly for LAN use
 - No playlist, subtitles, or aspect-ratio switching yet
 

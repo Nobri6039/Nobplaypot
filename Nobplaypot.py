@@ -11,24 +11,24 @@
   * 快捷键: 空格 播放暂停, ←/→ 快退/快进 5 秒, ↑/↓ 音量, F 全屏, Esc 退出全屏, Ctrl+L 日志目录
 
 流式传输:
-  * 主持: 开放 TCP 指令端口(默认 5000)+ UDP 流端口(默认 5001),
-    客户端先经指令端口同步身份与播放状态(文件/进度/总长/暂停/倍率),
-    画面经流端口以 UDP(TS 封装)单向推给各客户端; 心跳与房间人数同步走指令端口
-  * 加入: 输入指令地址与流接收地址(如 127.0.0.1:5000 / 127.0.0.1:5001),
-    本机用同一套 VLC 直接渲染主持推来的 UDP 画面; 播放/暂停/倍速等控制只把
-    指令发回主持端执行, 主持处理后再把新状态的流推过来; 音量/静音属于本机
-  * 推流方式: 主持端播放器直接挂 sout 推流转码; 客户端加入时重建推流链,
-    客户端离开时保持当前播放(残留推流稍后剥离)
+  * 主持: 开放 TCP 指令端口(默认 5000)与 TCP 媒体端口(默认 5001);
+    客户端先经指令端口同步身份与播放状态(文件/进度/总长/暂停/倍率)
+  * 媒体流: 主持端 VLC 转码为 H.264/TS 后先送到本机中转, 再由应用层
+    通过可靠 TCP 逐客户端分发; 客户端接收后在本机重放给 VLC 渲染,
+    弱网时由 TCP 重传 + 本机缓冲吸收抖动, 避免裸 UDP 丢包直接黑屏
+  * 加入: 输入指令地址与主持流地址(如 192.168.1.10:5000 / 192.168.1.10:5001),
+    客户端主动连接主持的媒体端口, 本机不开放入站端口; 播放/暂停/倍速等控制
+    只把指令发回主持端执行, 主持处理后再把新状态的流推过来; 音量/静音属于本机
+  * 推流方式: 主持端播放器直接挂 sout 推流转码到本机中转; 客户端进出由
+    可靠流分发器处理, 不重建推流链; 客户端离开时保持当前播放(残留推流稍后剥离)
   * 跳转: 推流中拖动进度由主持端中断推流, 从新进度重建推流(流时间轴从 0 开始),
     然后广播 resync 让客户端重连画面; 客户端本身的进度条只把指令发给主持
   * 限制: libvlc 的 sout 链原地 seek 会永久断流, 因此推流中的跳转走"重建推流"
-  * 稳定性: libvlc 停止 UDP 输入/释放播放器偶尔会阻塞很久, 客户端退出与会话
-    关闭都把这类回收放到后台线程, 界面线程不做可能阻塞的 VLC 调用
-  * 稳定性: libvlc 停止 UDP 输入/释放播放器偶尔会阻塞很久, 客户端退出与会话
+  * 稳定性: libvlc 停止输入/释放播放器偶尔会阻塞很久, 客户端退出与会话
     关闭都把这类回收放到后台线程, 界面线程不做可能阻塞的 VLC 调用
   * 房间密码: 主持可开启(默认开启)房间密码; 客户端加入时由主持端核验,
     密码只保存在主持端, 不会随房间信息下发给客户端
-  * 指令端口使用 TCP + 换行分隔的 JSON 消息; 心跳 2s, 8s 无消息判定离线
+  * 指令端口使用 TCP + 换行分隔的 JSON 消息; 心跳 2s, 12s 无消息判定离线
 
 日志:
   * 位置 %APPDATA%\\Nobplaypot\\logs\\nobplaypot.log(按 2MB 轮转, 保留 3 份)
@@ -52,6 +52,7 @@ import socket
 import socketserver
 import subprocess
 import sys
+import struct
 import tempfile
 import threading
 import time
@@ -63,7 +64,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 
 APP_TITLE = "Nobplaypot"
-APP_VERSION = "v1.0.0"
+APP_VERSION = "v1.2.0"
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA") or os.path.expanduser("~"), "Nobplaypot"
 )
@@ -107,7 +108,7 @@ STREAM_DEFAULT_UDP_PORT = 5001
 STREAM_MAX_CLIENTS = 32
 STREAM_HEARTBEAT_S = 2.0
 STREAM_STALE_S = 12.0
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 STREAM_MAX_MSG_BYTES = 65536
 STREAM_PASSWORD_ATTEMPTS = 5
 CHAT_MAX_CHARS = 200
@@ -200,7 +201,8 @@ DEFAULT_SETTINGS = {
     "audio_bitrate": 128,
     "preset": "veryfast",
     "keyint": 24,
-    "client_caching": 2000,     # ms
+    "client_caching": 400,      # ms
+    "buffer_scale": 1.0,        # 缓冲提示相对于视频大小的缩放倍数
     "heartbeat": 2.0,           # s
     "stale": 12.0,              # s
     "cmd_port": STREAM_DEFAULT_CMD_PORT,
@@ -219,6 +221,7 @@ SETTINGS_RANGES = {
     "audio_bitrate": (64, 320),
     "keyint": (10, 120),
     "client_caching": (200, 5000),
+    "buffer_scale": (0.5, 2.5),
     "heartbeat": (1.0, 10.0),
     "stale": (4.0, 60.0),
     "cmd_port": (1, 65535),
@@ -353,10 +356,10 @@ def load_settings():
     raw = dict(config.get("settings") or {})
     legacy = config.get("settings_version") != CONFIG_VERSION
     if legacy:
-        # 旧版本默认值升级: 更抗网络抖动的缓冲和关键帧
+        # 1x 已改为流复制, 旧配置的大缓冲一次性降到 400ms 以降低延迟
         try:
-            if int(raw.get("client_caching", 1000)) < 1500:
-                raw["client_caching"] = 2000
+            if int(raw.get("client_caching", 400)) > 800:
+                raw["client_caching"] = 400
         except (TypeError, ValueError):
             pass
         if raw.get("keyint") == 30:
@@ -1438,8 +1441,20 @@ def encode_message(message):
 
 
 def build_sout(targets, display=True, bandwidth=2200, scale=1.0, fps=30,
-               audio_bitrate=128, preset="veryfast", keyint=30):
-    """libvlc :sout 选项: 本地显示 + 转码 H264 后经 UDP(TS) 推送到各客户端。"""
+               audio_bitrate=128, preset="veryfast", keyint=30, rate=1.0):
+    """libvlc :sout 选项。
+
+    1x 播放时走 **流复制**(不重编码): 直接把源文件的 H.264/AAC 等 ES 复用到 TS
+    通过 UDP 发出, 延迟和 CPU 都最低; 只有变速(≠1x)时才做 x264 zerolatency 转码。
+    """
+    if abs(float(rate) - 1.0) < 0.01:
+        streams = ",".join(
+            f'dst="std{{access=udp,mux=ts,dst={ip}:{port}}}"'
+            for ip, port in targets
+        )
+        if display:
+            return "#duplicate{dst=display," + streams + "}"
+        return "#duplicate{" + streams + "}"
     udp_dsts = ",".join(
         f"dst=udp{{dst={ip}:{port},mux=ts}}" for ip, port in targets
     )
@@ -1452,6 +1467,189 @@ def build_sout(targets, display=True, bandwidth=2200, scale=1.0, fps=30,
     if display:
         return '#duplicate{dst=display,dst="' + transcode + ":duplicate{" + udp_dsts + '}"}'
     return "#" + transcode + ":duplicate{" + udp_dsts + "}"
+
+
+STREAM_CHUNK_SIZE = 1316
+
+MEDIA_HELLO = b"NBPLAY1"
+
+
+class UdpMediaSender:
+    """主持端: VLC 本地 UDP 中转 -> 原包转发给已注册客户端。
+
+    媒体层不做任何自研协议: 不解析、不排队、不改包、不做 FEC/NACK。
+    客户端只发一个很小的 UDP 注册包, 主持端把 VLC 的 TS 数据报原样发回,
+    抖动/乱序/缓冲全部交给客户端 VLC 自己处理。
+    """
+
+    def __init__(self, media_port):
+        self._relay = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._relay.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+        self._relay.bind(("127.0.0.1", 0))
+        self._relay.settimeout(0.5)
+        self.relay_port = self._relay.getsockname()[1]
+        self._media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._media.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+        self._media.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 20)
+        self._media.bind(("0.0.0.0", int(media_port)))
+        self._media.settimeout(0.5)
+        self.port = self._media.getsockname()[1]
+        self._clients = {}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._relay_thread = None
+        self._media_thread = None
+
+    def start(self):
+        if self._media_thread is None:
+            self._media_thread = threading.Thread(
+                target=self._media_loop, name="udp-media-register", daemon=True)
+            self._media_thread.start()
+        if self._relay_thread is None:
+            self._relay_thread = threading.Thread(
+                target=self._relay_loop, name="udp-media-relay", daemon=True)
+            self._relay_thread.start()
+
+    def stop(self):
+        self._stop.set()
+        for sock in (self._relay, self._media):
+            try:
+                sock.close()
+            except OSError:
+                pass
+        for thread in (self._media_thread, self._relay_thread):
+            if thread is not None:
+                thread.join(timeout=1.0)
+        self._media_thread = None
+        self._relay_thread = None
+        with self._lock:
+            self._clients.clear()
+
+    def client_count(self):
+        with self._lock:
+            return len(self._clients)
+
+    def _media_loop(self):
+        while not self._stop.is_set():
+            try:
+                data, addr = self._media.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if data.startswith(MEDIA_HELLO):
+                cid = data[len(MEDIA_HELLO):].decode("utf-8", "ignore") or (
+                    "anon-%s:%d" % (addr[0], addr[1]))
+                with self._lock:
+                    self._clients[cid] = (addr, time.monotonic())
+                log.info("媒体注册: %s -> %s:%d", cid, addr[0], addr[1])
+
+    def _relay_loop(self):
+        while not self._stop.is_set():
+            try:
+                data, _ = self._relay.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            now = time.monotonic()
+            with self._lock:
+                dead = [cid for cid, (_a, t) in self._clients.items()
+                        if now - t > 5.0]
+                for cid in dead:
+                    self._clients.pop(cid, None)
+                addrs = [a for a, _t in self._clients.values()]
+            for addr in addrs:
+                try:
+                    self._media.sendto(data, addr)
+                except OSError:
+                    pass
+
+
+class UdpMediaReceiver:
+    """客户端: UDP 注册 + 收到的 TS 原包直接交给本机 VLC。
+
+    不解析、不排队、不重排、不补包; 缓冲与抖动由 VLC 的 network-caching 负责。
+    """
+
+    def __init__(self, host, port, on_nack=None):
+        self.host = str(host)
+        self.port = int(port)
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+        self._sock.bind(("0.0.0.0", 0))
+        self._sock.settimeout(0.2)
+        self._tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.local_port = 0
+        self._client_id = ""
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._first_packet_logged = False
+
+    def start(self):
+        if self._thread is None:
+            self._thread = threading.Thread(
+                target=self._loop, name="udp-media-receiver", daemon=True)
+            self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        for sock in (self._sock, self._tx):
+            try:
+                sock.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+
+    def set_local_port(self, port):
+        with self._lock:
+            self.local_port = int(port)
+
+    def set_client_id(self, client_id):
+        self._client_id = str(client_id or "")
+
+    def _loop(self):
+        last_hello = 0.0
+        while not self._stop.is_set():
+            now = time.monotonic()
+            if now - last_hello > 1.5:
+                hello = MEDIA_HELLO + self._client_id.encode("utf-8", "ignore")
+                try:
+                    self._sock.sendto(hello, (self.host, self.port))
+                except OSError:
+                    pass
+                last_hello = now
+            try:
+                data, _addr = self._sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not self._first_packet_logged:
+                self._first_packet_logged = True
+                log.info("媒体流首包到达: %s:%d (%d 字节)",
+                         self.host, self.port, len(data))
+            with self._lock:
+                port = self.local_port
+            if port > 0:
+                try:
+                    self._tx.sendto(data, ("127.0.0.1", port))
+                except OSError:
+                    pass
+
+
+
+
+def ephemeral_udp_port():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+    finally:
+        sock.close()
 
 
 # ---------------------------------------------------------------------------
@@ -3360,14 +3558,14 @@ class HostStreamDialog(_StreamDialogBase):
                  font=ui_font(14, True), anchor="w").pack(fill=tk.X)
         tk.Label(
             self.body,
-            text="开放 TCP 指令端口用于控制与状态同步, 画面经 UDP 流端口单向推给客户端。",
+            text="开放 TCP 指令端口与媒体端口; 客户端主动连入媒体端口, 主持端转码后经可靠 TCP 推流。",
             bg=C.BG, fg=C.TEXT_MUTED, font=ui_font(9), anchor="w", justify=tk.LEFT,
             wraplength=380,
         ).pack(fill=tk.X, pady=(4, 12))
         self.cmd_var = tk.StringVar(value=str(cmd_port))
         self.udp_var = tk.StringVar(value=str(udp_port))
         _stream_field_row(self.body, "指令端口", self.cmd_var)
-        _stream_field_row(self.body, "流端口", self.udp_var)
+        _stream_field_row(self.body, "媒体端口（主持监听）", self.udp_var)
 
         tk.Frame(self.body, bg=C.STROKE, height=1).pack(fill=tk.X, pady=(14, 10))
         password_line = tk.Frame(self.body, bg=C.BG)
@@ -3526,14 +3724,14 @@ class JoinStreamDialog(_StreamDialogBase):
                  font=ui_font(14, True), anchor="w").pack(fill=tk.X)
         tk.Label(
             self.body,
-            text="填写主持的指令地址, 以及本机接收画面的流地址\n"
-                 "(主持会把 UDP 画面推送到你填写的流地址)。",
+            text="填写主持的指令地址, 以及主持的媒体流地址\n"
+                 "(客户端主动连接主持的媒体端口, 本机无需开放任何入站端口)。",
             bg=C.BG, fg=C.TEXT_MUTED, font=ui_font(9), anchor="w", justify=tk.LEFT,
         ).pack(fill=tk.X, pady=(4, 12))
         self.cmd_var = tk.StringVar(value=cmd_addr)
         self.udp_var = tk.StringVar(value=stream_addr)
         _stream_field_row(self.body, "指令地址", self.cmd_var)
-        _stream_field_row(self.body, "流接收地址", self.udp_var)
+        _stream_field_row(self.body, "主持流地址", self.udp_var)
         self._footer("加入会话", self._confirm)
 
     def _confirm(self):
@@ -3543,7 +3741,7 @@ class JoinStreamDialog(_StreamDialogBase):
             self.show_error("指令地址格式不对, 例如 127.0.0.1:5000")
             return
         if stream is None:
-            self.show_error("流接收地址格式不对, 例如 127.0.0.1:5001")
+            self.show_error("主持流地址格式不对, 例如 192.168.1.10:5001")
             return
         self.finish((cmd[0], cmd[1], stream[0], stream[1]))
 
@@ -3950,13 +4148,16 @@ class SettingsDialog(_StreamDialogBase):
         row = self._row(page, "客户端缓冲", "接收端缓冲, 网络抖动大时可调高")
         self._slider(row, "client_caching", 200, 5000,
                      lambda v: f"{int(round(v))} ms", width=200)
+        row = self._row(page, "缓冲图标缩放", "视频中央「缓冲中」提示的大小倍数")
+        self._slider(row, "buffer_scale", 0.5, 2.5,
+                     lambda v: f"{v:.1f}x", width=200)
         row = self._row(page, "心跳间隔", "指令端口心跳包间隔")
         self._slider(row, "heartbeat", 1.0, 10.0, lambda v: f"{v:.1f} 秒")
         row = self._row(page, "离线判定", "超过这个时间没有心跳就判定客户端离线")
         self._slider(row, "stale", 4.0, 60.0, lambda v: f"{v:.1f} 秒")
         row = self._row(page, "默认指令端口", "主持/加入对话框的默认值")
         self._entry(row, "cmd_port")
-        row = self._row(page, "默认流端口", "主持/加入对话框的默认值")
+        row = self._row(page, "默认媒体端口", "主持端监听的默认 TCP 媒体端口")
         self._entry(row, "udp_port")
 
     # -------------------------------------------------------------- 保存
@@ -4730,6 +4931,137 @@ class DanmakuOverlay(tk.Canvas):
         self.canvas.delete("all")
 
 
+class BufferingOverlay(tk.Canvas):
+    """视频区中央的透明「缓冲中」层: 多个小圆围绕成环, 随视频大小与设置缩放。"""
+
+    KEY = "#010203"
+    DOTS = 8
+    BASE_HEIGHT = 600.0
+
+    def __init__(self, master):
+        super().__init__(master, width=200, height=200, bg=self.KEY,
+                         highlightthickness=0, bd=0)
+        self._job = None
+        self._visible = False
+        self._head = 0
+        self._scale = 1.0
+        self._user_scale = 1.0
+        self._dots = []
+        self._text = None
+        self._layered_child()
+        self._draw()
+        master.bind("<Configure>", self._on_master_configure, add="+")
+
+    def set_user_scale(self, scale):
+        try:
+            scale = float(scale)
+        except (TypeError, ValueError):
+            scale = 1.0
+        self._user_scale = max(0.4, min(3.0, scale))
+        self._apply_scale()
+
+    def _on_master_configure(self, event=None):
+        self._apply_scale()
+
+    def _apply_scale(self):
+        try:
+            height = self.master.winfo_height()
+        except Exception:
+            height = 0
+        video_scale = (max(0.6, min(2.5, height / self.BASE_HEIGHT))
+                       if height > 1 else 1.0)
+        scale = max(0.4, min(4.0, video_scale * self._user_scale))
+        if abs(scale - self._scale) < 0.02:
+            return
+        self._scale = scale
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        size = int(200 * self._scale)
+        self.configure(width=size, height=size)
+        if self._visible:
+            try:
+                self.place_configure(width=size, height=size)
+            except tk.TclError:
+                pass
+        center = size / 2.0
+        ring = size * 0.30
+        dot_r = max(2.0, size * 0.035)
+        text_size = max(9, int(15 * self._scale))
+        ring_y = center - text_size * 0.9
+        self._dots = []
+        for i in range(self.DOTS):
+            angle = -math.pi / 2 + i * (2 * math.pi / self.DOTS)
+            x = center + ring * math.cos(angle)
+            y = ring_y + ring * math.sin(angle)
+            item = self.create_oval(x - dot_r, y - dot_r, x + dot_r, y + dot_r,
+                                    fill="#FFFFFF", outline="")
+            self._dots.append(item)
+        self._text = self.create_text(center, size * 0.80, text="缓冲中",
+                                      fill="#FFFFFF", font=ui_font(text_size, True))
+        self._paint()
+
+    def _paint(self):
+        for i, item in enumerate(self._dots):
+            level = (i - self._head) % self.DOTS
+            ratio = 1.0 - level / float(self.DOTS)
+            value = int(60 + 195 * ratio)
+            color = "#%02X%02X%02X" % (value, value, value)
+            try:
+                self.itemconfigure(item, fill=color)
+            except tk.TclError:
+                pass
+
+    def _layered_child(self):
+        try:
+            import ctypes
+            hwnd = self.winfo_id()
+            user32 = ctypes.windll.user32
+            gwl_exstyle = -20
+            style = user32.GetWindowLongW(hwnd, gwl_exstyle)
+            user32.SetWindowLongW(
+                hwnd, gwl_exstyle,
+                style | 0x00080000 | 0x00000020 | 0x08000000)
+            key = (int(self.KEY[1:3], 16) | (int(self.KEY[3:5], 16) << 8)
+                   | (int(self.KEY[5:7], 16) << 16))
+            user32.SetLayeredWindowAttributes(hwnd, key, 0, 0x1)
+        except Exception:
+            pass
+
+    def _raise_native(self):
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.SetWindowPos(self.winfo_id(), 0, 0, 0, 0, 0,
+                                0x0001 | 0x0002 | 0x0010 | 0x0040)
+        except Exception:
+            pass
+
+    def show(self):
+        self._visible = True
+        self._raise_native()
+        if self._job is None:
+            self._tick()
+
+    def hide(self):
+        self._visible = False
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _tick(self):
+        if not self._visible:
+            self._job = None
+            return
+        self._head = (self._head + 1) % self.DOTS
+        self._paint()
+        self._job = self.after(90, self._tick)
+
+
 class StreamWatchView(tk.Canvas):
     """加入会话后的同步面板: 不渲染视频, 只展示同步状态。"""
 
@@ -4880,6 +5212,8 @@ class VideoPlayerApp:
         self._host_server = None
         self._host_cmd_port = None
         self._host_udp_port = None
+        self._stream_sender = None
+        self._stream_receiver = None
         self._host_monitor_stop = threading.Event()
         self._hosting = False
         self._host_password = ""
@@ -5152,9 +5486,16 @@ class VideoPlayerApp:
                                         bg=C.VIDEO)
         self.drop_hint.pack(fill=tk.BOTH, expand=True)
         self.watch_view = StreamWatchView(self.video_frame, bg=C.VIDEO)
+        self.buffering = BufferingOverlay(self.video_frame)
+        self._buffering_visible = False
+        self._client_prev_playing = False
+        self._displayed_pictures = -1
+        self._last_frame_ts = 0.0
+        self._buffer_job = None
         self._build_fs_dock()
         self.root.after(500, self._watch_danmaku)
         self.root.after(1000, self._client_watchdog)
+        self.root.after(300, self._buffering_tick)
 
     # ------------------------------------------------------- 全屏控制 dock
     def _build_fs_dock(self):
@@ -5554,6 +5895,20 @@ class VideoPlayerApp:
                 if event.get("ok"):
                     self._client_lost_at = 0.0
                     self._set_status("已重新连接 · 等待同步", "playing")
+            elif kind == "join_result":
+                if not self._client_active:
+                    return
+                if event.get("ok"):
+                    log.info("已连接主持指令通道: %s", self._client_cmd_addr)
+                    self._set_status("已连接主持 · 等待同步", "playing")
+                else:
+                    log.error("无法连接主持指令端口: %s", self._client_cmd_addr)
+                    self._alert(
+                        "连接失败",
+                        "无法连接主持的指令端口。\n"
+                        "请检查主持是否已开始、地址端口是否填写正确。",
+                    )
+                    self.leave_stream()
         except Exception:
             log.exception("处理网络事件失败: %s", kind)
 
@@ -5581,6 +5936,14 @@ class VideoPlayerApp:
                          name=f"host-serve-{cmd_port}").start()
         threading.Thread(target=self._host_monitor_loop, daemon=True,
                          name=f"host-monitor-{cmd_port}").start()
+        try:
+            self._stream_sender = UdpMediaSender(udp_port)
+            self._stream_sender.start()
+            log.info("媒体流监听 0.0.0.0:%d (客户端主动连入), VLC 本地中转 %d",
+                     self._stream_sender.port, self._stream_sender.relay_port)
+        except OSError as error:
+            self._stream_sender = None
+            log.warning("可靠流中转启动失败: %s", error)
         self.stream_button.set_active(True)
         self._refresh_stream_button_tooltip()
         self._sync_members_button()
@@ -5590,7 +5953,7 @@ class VideoPlayerApp:
         self.chat_panel.clear()
         self._sync_chat_panel()
         self._sync_danmaku()
-        log.info("开始主持流式: TCP 指令端口 %d, UDP 流端口 %d, 房间密码 %s",
+        log.info("开始主持流式: TCP 指令端口 %d, 媒体端口 %d, 房间密码 %s",
                  cmd_port, udp_port, "开启" if self._host_password else "关闭")
         password_hint = " · 密码" if self._host_password else ""
         self._set_status(
@@ -5624,6 +5987,13 @@ class VideoPlayerApp:
                 server.server_close()
             except Exception:
                 pass
+        sender = self._stream_sender
+        self._stream_sender = None
+        if sender is not None:
+            try:
+                sender.stop()
+            except Exception:
+                log.exception("停止可靠流中转失败")
         self.stream_button.set_active(False)
         self._refresh_stream_button_tooltip()
         self._close_member_dialog()
@@ -5692,17 +6062,27 @@ class VideoPlayerApp:
         """重建主持端推流链(客户端进出时调用)。"""
         self._rebuild_stream()
 
+    def _sout_targets_now(self):
+        """VLC sout 的实际目标: 本机可靠流中转(客户端由 TCP 分发)。"""
+        if self._hosting and self._stream_sender is not None:
+            return (("127.0.0.1", self._stream_sender.relay_port),)
+        return ()
+
     def _rebuild_stream(self):
-        """客户端进出/断开时重建媒体: 本地显示 + 推流到当前目标集合。"""
+        """客户端进出/断开时重建媒体: 本地显示 + 推流到本机中转。"""
         targets = tuple(self._stream_targets())
         if not targets:
             if self._sout_targets:
                 log.info("客户端已全部离开: 保持当前播放, 不重建媒体")
             return
-        if targets == self._sout_targets:
+        sout_targets = self._sout_targets_now()
+        if not sout_targets:
             return
-        self._sout_targets = targets
-        log.info("重建流: 目标 %s", targets)
+        if sout_targets == self._sout_targets:
+            return
+        self._sout_targets = sout_targets
+        log.info("重建流: %d 个客户端 -> 可靠中转 127.0.0.1:%d",
+                 len(targets), self._stream_sender.port)
         if self.player is None or self.current_path is None:
             return
         started = time.monotonic()
@@ -5710,12 +6090,21 @@ class VideoPlayerApp:
         was_playing = self.player.is_playing()
         rate = self._current_rate()
         self.media = self.instance.media_new(self.current_path)
-        self.media.add_option(f":sout={build_sout(targets, **self._sout_kwargs())}")
+        if position > 0:
+            # 成员变化重建时必须从当前进度继续, 否则整条流会回到视频第一帧
+            self.media.add_option(f":start-time={position / 1000.0:.3f}")
+        self.media.add_option(
+            f":sout={build_sout(sout_targets, rate=rate, **self._sout_kwargs())}")
         self.media.add_option(":sout-keep")
         # 有 sout 时 player.set_rate 会被转码链按 1x 处理, 必须用媒体选项
         self.media.add_option(f":rate={rate:g}")
         self.player.set_media(self.media)
         self.player.play()
+        if position > 0:
+            try:
+                self.player.set_time(int(position))
+            except Exception:
+                log.debug("重建后回跳进度失败", exc_info=True)
         self.player.set_rate(rate)
         if not was_playing:
             self.player.pause()
@@ -5723,8 +6112,8 @@ class VideoPlayerApp:
         self._last_state = None
         self._volume_applied = False
         self._bump_stream_epoch("rebuild")
-        self._set_status(f"推流已从头重建 · 房间 {self._room_count()} 人", "playing")
-        log.info("流重建完成: 从头推流(成员变化), 原进度 %s, 耗时 %.2fs",
+        self._set_status(f"推流已从当前进度重建 · 房间 {self._room_count()} 人", "playing")
+        log.info("流重建完成: 从当前进度推流(成员变化), 进度 %s, 耗时 %.2fs",
                  format_time(position), time.monotonic() - started)
         self._update_play_button()
         self._broadcast_state()
@@ -5919,12 +6308,13 @@ class VideoPlayerApp:
         if target is None or self.player is None or self.current_path is None:
             return
         targets = tuple(self._stream_targets())
-        if not (self._hosting and targets):
+        sout_targets = self._sout_targets_now()
+        if not (self._hosting and targets and sout_targets):
             return
         started = time.monotonic()
         rate = self._current_rate()
         was_playing = self.player.is_playing()
-        self._sout_targets = targets
+        self._sout_targets = sout_targets
         self._resyncing = True
         if reason == "rate":
             log.info("推流速度: 按 %gx 中断推流并重建", rate)
@@ -5935,7 +6325,7 @@ class VideoPlayerApp:
         try:
             self.media = self.instance.media_new(self.current_path)
             self.media.add_option(
-                f":sout={build_sout(targets, **self._sout_kwargs())}")
+                f":sout={build_sout(sout_targets, **self._sout_kwargs())}")
             self.media.add_option(":sout-keep")
             self.media.add_option(f":start-time={target / 1000.0:.3f}")
             self.media.add_option(f":rate={rate:g}")
@@ -6436,6 +6826,23 @@ class VideoPlayerApp:
             self.progress_var.set(0.0)
             self.time_label.configure(text="00:00")
             self.duration_label.configure(text="00:00")
+        if self._stream_receiver is not None:
+            try:
+                self._stream_receiver.stop()
+            except Exception:
+                pass
+            self._stream_receiver = None
+        try:
+            receiver = UdpMediaReceiver(udp_host, udp_port)
+            receiver.start()
+        except OSError as error:
+            log.error("流接收端口 %d 打开失败: %s", udp_port, error)
+            self._alert(
+                "流端口不可用",
+                f"本机流接收端口 {udp_port} 打开失败:\n{error}\n请换一个端口后重试。",
+            )
+            return
+        self._stream_receiver = receiver
         self._client_active = True
         self._client_password = None
         self._close_password_dialog()
@@ -6464,18 +6871,14 @@ class VideoPlayerApp:
         self._sync_chat_panel()
         self._sync_danmaku()
         self.root.title(f"同步播放 — {APP_TITLE}")
-        if self._client_connect():
-            log.info("已连接主持 %s:%d (流接收 %s:%d)",
-                     cmd_host, cmd_port, udp_host, udp_port)
-            self._set_status("已连接主持 · 等待同步", "playing")
-        else:
-            log.error("无法连接主持指令端口 %s:%d", cmd_host, cmd_port)
-            self._alert(
-                "连接失败",
-                f"无法连接主持的指令端口 {cmd_host}:{cmd_port}。\n"
-                "请检查主持是否已开始, 地址端口是否填写正确。",
-            )
-            self.leave_stream()
+        def connect_worker():
+            ok = self._client_connect()
+            self.queue_net_event({"kind": "join_result", "ok": ok})
+
+        self._set_status("正在连接主持…", "playing")
+        self._show_buffering()
+        threading.Thread(target=connect_worker, daemon=True,
+                         name="client-connect").start()
 
     def leave_stream(self):
         if not self._client_active:
@@ -6485,6 +6888,13 @@ class VideoPlayerApp:
         self._client_lost_at = 0.0
         self._client_preparing = False
         self._client_stop.set()
+        receiver = self._stream_receiver
+        self._stream_receiver = None
+        if receiver is not None:
+            try:
+                receiver.stop()
+            except Exception:
+                log.exception("停止可靠流接收失败")
         sock = self._client_sock
         self._client_sock = None
         self._client_connected = False
@@ -6618,10 +7028,10 @@ class VideoPlayerApp:
             self._client_send({"v": STREAM_VERSION, "type": "ping"})
 
     def _client_stream_url(self):
-        host, port = self._client_udp_addr
-        if not host or host in ("0.0.0.0", "*"):
-            return f"udp://@:{port}"
-        return f"udp://@{host}:{port}"
+        receiver = self._stream_receiver
+        if receiver is not None and receiver.local_port > 0:
+            return f"udp://@127.0.0.1:{receiver.local_port}"
+        return ""
 
     def _dispose_player_async(self, player):
         """在后台线程回收旧播放器: libvlc 停止 UDP 输入偶尔会阻塞很久,
@@ -6648,6 +7058,82 @@ class VideoPlayerApp:
         self._attach_video_output()
         return self.player
 
+    def _show_buffering(self):
+        if self._closing or self._buffering_visible:
+            return
+        try:
+            self.buffering.set_user_scale(self.settings.get("buffer_scale", 1.0))
+        except Exception:
+            log.debug("设置缓冲层缩放失败", exc_info=True)
+        self._buffering_visible = True
+        try:
+            self.buffering.place(relx=0.5, rely=0.5, anchor="center")
+            self.buffering.lift()
+            self.buffering.show()
+        except Exception:
+            log.debug("显示缓冲层失败", exc_info=True)
+
+    def _hide_buffering(self):
+        if not self._buffering_visible:
+            return
+        self._buffering_visible = False
+        try:
+            self.buffering.hide()
+            self.buffering.place_forget()
+        except Exception:
+            log.debug("隐藏缓冲层失败", exc_info=True)
+
+    def _buffering_tick(self):
+        self._buffer_job = None
+        try:
+            self._update_buffering_state()
+        except Exception:
+            log.exception("缓冲状态检查异常")
+        if not self._closing:
+            self._buffer_job = self.root.after(250, self._buffering_tick)
+
+    def _update_buffering_state(self):
+        if not self._client_active:
+            self._hide_buffering()
+            return
+        state = self._client_state or {}
+        # 与底部播放/暂停按钮一致: 按钮显示“播放中”才需要出画面
+        if not state.get("playing") or state.get("stopped"):
+            self._hide_buffering()
+            return
+        if not self._client_video_started or self.player is None:
+            self._show_buffering()
+            return
+        pictures = -1
+        try:
+            media = self.player.get_media()
+            if media is not None:
+                stats = vlc.MediaStats()
+                if media.get_stats(stats):
+                    pictures = int(stats.displayed_pictures or 0)
+        except Exception:
+            pictures = -1
+        if pictures < 0:
+            try:
+                pictures = int(self.player.get_time())
+            except Exception:
+                pictures = -1
+        now = time.monotonic()
+        if pictures <= 0:
+            # 还没显示过任何一帧
+            self._show_buffering()
+            return
+        if pictures != self._displayed_pictures:
+            self._displayed_pictures = pictures
+            self._last_frame_ts = now
+            self._hide_buffering()
+            return
+        if self._last_frame_ts == 0.0:
+            self._last_frame_ts = now
+            return
+        if now - self._last_frame_ts > 0.45:
+            self._show_buffering()
+
     def _start_client_video(self):
         """客户端用同一套 VLC 播放主持推来的 UDP 流, 画面直接渲染到视频区。"""
         if self.instance is None or self._client_udp_addr is None:
@@ -6662,7 +7148,12 @@ class VideoPlayerApp:
             self._create_player()
         if self.player is None:
             return
+        if self._stream_receiver is not None:
+            self._stream_receiver.set_local_port(ephemeral_udp_port())
         url = self._client_stream_url()
+        if not url:
+            log.warning("可靠流接收器未就绪, 无法开始客户端画面")
+            return
         caching = int(self.settings.get("client_caching", 1000))
         try:
             self._client_media = self.instance.media_new(url)
@@ -6682,9 +7173,12 @@ class VideoPlayerApp:
             self._client_video_started = True
             self._client_video_start_ts = time.monotonic()
             self._client_last_media_ms = -1
+            self._displayed_pictures = -1
+            self._last_frame_ts = 0.0
             self._client_stall_since = None
             self._schedule_danmaku_sync()
             self.watch_view.pack_forget()
+            self._show_buffering()
             log.info("客户端开始接收并渲染流: %s", url)
         except Exception:
             log.exception("客户端流渲染启动失败")
@@ -6714,8 +7208,6 @@ class VideoPlayerApp:
             self._client_stall_since = None
             return
         now = time.monotonic()
-        if now - self._client_video_start_ts < 6.0:
-            return
         try:
             media_ms = int(self.player.get_time())
             playing = bool(self.player.is_playing())
@@ -6724,6 +7216,8 @@ class VideoPlayerApp:
         if media_ms >= 0 and media_ms != self._client_last_media_ms:
             self._client_last_media_ms = media_ms
             self._client_stall_since = now
+            return
+        if now - self._client_video_start_ts < 6.0:
             return
         if self._client_stall_since is None:
             self._client_stall_since = now
@@ -6734,15 +7228,16 @@ class VideoPlayerApp:
                 return
             self._client_last_restart = now
             self._client_restart_count += 1
-            log.warning("客户端画面停滞 %.1fs, 自动重连 UDP 流 (第 %d 次)",
+            log.warning("客户端画面停滞 %.1fs, 自动重启本机画面 (第 %d 次)",
                         stall, self._client_restart_count)
-            self._set_status("画面中断 · 正在自动重连流…", "playing")
+            self._set_status("画面中断 · 正在重建本机画面…", "playing")
             self._client_stall_since = None
             self._client_last_media_ms = -1
             self._start_client_video()
 
     def _stop_client_video(self):
         """退出会话: 旧播放器交给后台回收, UI 立刻可用。"""
+        self._hide_buffering()
         self._client_video_started = False
         self._client_epoch_seen = None
         player = self.player
@@ -6780,6 +7275,8 @@ class VideoPlayerApp:
                 self._start_client_video()
         elif message_type == "welcome":
             self._client_id = message.get("client_id")
+            if self._stream_receiver is not None:
+                self._stream_receiver.set_client_id(self._client_id)
             self._close_password_dialog()
             log.info("主持已确认加入: client_id=%s", self._client_id)
         elif message_type == "state":
@@ -6928,6 +7425,25 @@ class VideoPlayerApp:
             self._client_epoch_seen = epoch
             self._start_client_video()
 
+        # 主持暂停时客户端会把缓冲播到暂停点后停住; 恢复播放时如果本地流已结束,
+        # 立即重连并让缓冲提示盖住首帧, 不要停在视频第一帧上。
+        playing = bool(message.get("playing")) and not message.get("stopped")
+        if (playing and self._client_video_started and self.player is not None
+                and not getattr(self, "_client_preparing", False)):
+            try:
+                pstate = self.player.get_state()
+            except Exception:
+                pstate = None
+            ended_states = (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error,
+                            getattr(vlc.State, "NothingSpecial", None))
+            if pstate in ended_states:
+                log.info("主持恢复播放, 本地流已结束, 重新连接画面")
+                self._client_epoch_seen = None
+                self._start_client_video()
+            elif not self.player.is_playing():
+                self.player.play()
+                self._show_buffering()
+
         if message.get("stopped"):
             self._set_status("主持已停止播放")
         self._watch_refresh()
@@ -6946,6 +7462,7 @@ class VideoPlayerApp:
     def _client_on_lost(self):
         if not self._client_active:
             return
+        self._hide_buffering()
         self._client_connected = False
         self._client_reconnecting = False
         self._client_lost_at = time.time()
@@ -7011,7 +7528,8 @@ class VideoPlayerApp:
             )
             return
         try:
-            args = ["--no-video-title-show", "--quiet"]
+            args = ["--no-video-title-show", "--quiet",
+                    "--no-spu", "--no-sub-autodetect-file"]
             mode = self.settings.get("decode_mode", "auto")
             if mode == "hardware":
                 args.append("--avcodec-hw=any")
@@ -7173,6 +7691,11 @@ class VideoPlayerApp:
         global ANIMATIONS_ENABLED
         self.settings = settings
         save_settings(settings)
+        if hasattr(self, "buffering"):
+            try:
+                self.buffering.set_user_scale(settings.get("buffer_scale", 1.0))
+            except Exception:
+                log.debug("应用缓冲层缩放失败", exc_info=True)
         self.seek_step_ms = int(settings["seek_step"]) * 1000
         self._apply_log_level(settings.get("log_level", "INFO"))
         ANIMATIONS_ENABLED = bool(settings.get("animations", True))
@@ -7234,16 +7757,27 @@ class VideoPlayerApp:
             file_size = 0
         log.info("载入媒体: %s (%s)", path, format_size(file_size) or "大小未知")
 
+        # 换片时重建播放器: 避免上一条媒体的字幕轨/ES 选择残留,
+        # 否则 VLC 可能把上一部 MKV 的内嵌字幕带到新视频上。
+        if self.current_path is not None:
+            previous = self.player
+            self.player = None
+            self._dispose_player_async(previous)
+            self._create_player()
+            if self.player is None:
+                return
+
         # 主持中载入时把推流链一起带上(与旧版一致, 同步设置媒体)
         media = self.instance.media_new(path)
         self.media = media
         targets = tuple(self._stream_targets()) if self._hosting else ()
-        self._sout_targets = targets or None
-        if targets:
-            media.add_option(f":sout={build_sout(targets, **self._sout_kwargs())}")
+        sout_targets = self._sout_targets_now() if targets else ()
+        self._sout_targets = sout_targets or None
+        if sout_targets:
+            media.add_option(f":sout={build_sout(sout_targets, **self._sout_kwargs())}")
             media.add_option(":sout-keep")
             media.add_option(f":rate={self._current_rate():g}")
-            log.info("载入即推流: 目标 %s", targets)
+            log.info("载入即推流: %d 个客户端 -> 可靠中转", len(targets))
         if not self._hwnd_attached:
             self._attach_video_output()
         self.player.set_media(media)
