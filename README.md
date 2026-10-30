@@ -2,7 +2,7 @@
 
 🌐 **Website**: https://nobri6039.github.io/Nobplaypot/
 
-<img src="Social media preview image.jpg" width="820" alt="Social media preview">
+<img src="Social media preview image.png" width="820" alt="Social media preview">
 
 # Nobplaypot
 
