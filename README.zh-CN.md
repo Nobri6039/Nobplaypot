@@ -2,6 +2,8 @@
 
 🌐 **官网**: https://nobri6039.github.io/Nobplaypot/
 
+<img src="Social media preview image zh.jpg" width="820" alt="Social media preview">
+
 # Nobplaypot
 
 一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看：主持推流、客户端加入、房间密码，以及遥控播放 / 暂停 / 拖进度 / 改速度。
