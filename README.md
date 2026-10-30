@@ -4,6 +4,8 @@
 
 # Nobplaypot
 
+<img src="Social media preview image.jpg" width="820" alt="Social media preview">
+
 A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, made for LAN co-watching: host a stream, let others join, protect the room with a password, and control playback / seeking / speed remotely.
 
 > 一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看。
