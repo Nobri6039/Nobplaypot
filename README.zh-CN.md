@@ -4,6 +4,8 @@
 
 # Nobplaypot
 
+<img src="Social media preview image.jpg" width="820" alt="Social media preview">
+
 一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看：主持推流、客户端加入、房间密码，以及遥控播放 / 暂停 / 拖进度 / 改速度。
 
 > A dark-themed, VLC-powered video player with LAN co-watching: host/join, room password, and remote play / seek / speed control.
