@@ -1,0 +1,22 @@
+# VS / build outputs
+.vs/
+x64/
+Debug/
+Release/
+*.user
+
+# signing secret - NEVER commit
+tools/private-key.xml
+
+# generated at build/sign time
+pubkey.h
+Bin/payload.manifest
+Bin/payload.sig
+Bin/launch.log
+
+# payload copies (deploy artifacts)
+python-runtime/
+vlc-runtime/
+Bin/Nobplaypot.py
+Bin/Nobplaypot.pyw
+Bin/__pycache__/

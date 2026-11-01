@@ -2,6 +2,8 @@
 
 🌐 **官网**: https://nobri6039.github.io/Nobplaypot/
 
+<img src="Social media preview image zh.png" width="820" alt="Social media preview">
+
 # Nobplaypot
 
 <img src="Social media preview image zh.png" width="820" alt="Social media preview">

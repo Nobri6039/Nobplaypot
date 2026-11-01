@@ -293,7 +293,7 @@ body::after {
 .arch-arrow { display: grid; place-items: center; color: var(--muted-2); font-size: 22px; }
 
 /* gallery */
-.gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+.gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; align-items: start; }
 .shot {
   margin: 0; overflow: hidden; cursor: zoom-in;
   border: 1px solid var(--line); border-radius: var(--radius);
@@ -301,7 +301,11 @@ body::after {
   transition: border-color .2s ease, transform .2s ease;
 }
 .shot:hover { border-color: rgba(108, 139, 255, .4); transform: translateY(-2px); }
-.shot img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+/* 自然比例展示, 不再用固定 16:10 裁切, 避免截图被切掉两侧/上下 */
+.shot img { width: 100%; height: auto; display: block; }
+/* 全屏控制岛是超宽条状图, 单独占满一行 */
+.shot--wide { grid-column: 1 / -1; }
+.shot--wide img { width: 100%; height: auto; }
 .shot figcaption { padding: 12px 16px; font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--line); }
 
 /* download */

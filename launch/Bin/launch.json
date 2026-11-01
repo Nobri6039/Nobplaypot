@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "runtime": "python-runtime\\pythonw.exe",
+  "script": "Bin\\Nobplaypot.pyw",
+  "args": [],
+  "cwd": ".",
+  "inherit_args": true,
+  "env": {
+    "VLC_HOME": "vlc-runtime",
+    "PYTHONUTF8": "1",
+    "PYTHONIOENCODING": "utf-8"
+  },
+  "log": "Bin\\launch.log"
+}
