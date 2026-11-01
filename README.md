@@ -12,13 +12,17 @@ A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, ma
 
 The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners and icons, a dark title bar, and a floating control island that rises from the bottom in fullscreen.
 
-![Main window](screenshots/en/main.png)
+![Empty state](screenshots/en/main.png)
 
 ## Screenshots
 
-**Main window · English UI**
+**Empty state · what you see on first launch**
 
-<img src="screenshots/en/main.png" width="860" alt="Main window">
+<img src="screenshots/en/main.png" width="860" alt="Empty state">
+
+**Playing a local file**
+
+<img src="screenshots/en/playback.png" width="860" alt="Playing a local file">
 
 **Room chat**
 

@@ -5100,7 +5100,7 @@ class ChatPanel(tk.Frame):
             if not children:
                 break
             children[0].destroy()
-        self.count_label.configure(text=f"{len(self._messages)} 条")
+        self.count_label.configure(text=tr(f"{len(self._messages)} 条"))
         self.empty_label.pack_forget()
         if mine or at_bottom:
             self._schedule_scroll()
@@ -5114,7 +5114,7 @@ class ChatPanel(tk.Frame):
         for message in self._messages:
             self._render_message(message,
                                  mine=(message.get("sender_id") == my_id))
-        self.count_label.configure(text=f"{len(self._messages)} 条"
+        self.count_label.configure(text=tr(f"{len(self._messages)} 条")
                                    if self._messages else "")
         if self._messages:
             self.empty_label.pack_forget()
@@ -5144,7 +5144,7 @@ class ChatPanel(tk.Frame):
         try:
             if self._unread > 0:
                 self.unread_label.configure(
-                    text=f"{self._unread} 条新消息 ↓")
+                    text=tr(f"{self._unread} 条新消息 ↓"))
                 self.unread_label.place(in_=self._canvas, relx=0.5, rely=1.0,
                                         anchor="s", y=-6)
             else:

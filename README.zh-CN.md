@@ -12,13 +12,17 @@
 
 界面完全自绘（不使用 ttk 默认浅色控件），带抗锯齿圆角与图标、深色标题栏，以及全屏时从底部浮出的控制岛。
 
-![主界面](screenshots/zh/main.png)
+![空状态](screenshots/zh/main.png)
 
 ## 截图
 
-**主界面 · 中文界面**
+**空状态 · 刚打开软件时的样子**
 
-<img src="screenshots/zh/main.png" width="860" alt="主界面">
+<img src="screenshots/zh/main.png" width="860" alt="空状态">
+
+**播放本地文件**
+
+<img src="screenshots/zh/playback.png" width="860" alt="播放本地文件">
 
 **房间聊天**
 
