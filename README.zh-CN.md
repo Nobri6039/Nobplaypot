@@ -12,44 +12,25 @@
 
 界面完全自绘（不使用 ttk 默认浅色控件），带抗锯齿圆角与图标、深色标题栏，以及全屏时从底部浮出的控制岛。
 
-![主界面](screenshots/main.png)
+![主界面](screenshots/zh/main.png)
 
 ## 截图
 
-**全屏悬浮控制岛**
+**主界面 · 中文界面**
 
-<img src="screenshots/fullscreen-dock.png" width="820" alt="全屏控制岛">
-
-**设置 · 流式传输**
-
-<img src="screenshots/settings.png" width="620" alt="设置">
-
-**房间密码**
-
-<p>
-<img src="screenshots/host-password.png" width="320" alt="主持端启用密码">
-<img src="screenshots/room-password.png" width="260" alt="客户端输入密码">
-</p>
-
-**房间成员**
-
-<img src="screenshots/room_members_host.png" width="420" alt="房间成员">
+<img src="screenshots/zh/main.png" width="860" alt="主界面">
 
 **房间聊天**
 
-<img src="screenshots/chat_main_host.png" width="760" alt="房间聊天">
+<img src="screenshots/zh/chat.png" width="860" alt="房间聊天">
 
-**弹幕**
+**设置 · 流式传输**
 
-<img src="screenshots/danmaku_window.png" width="760" alt="弹幕">
+<img src="screenshots/zh/settings.png" width="620" alt="设置 · 流式传输">
 
-**聊天室设置**
+**浏览器同步 · 起始页**
 
-<img src="screenshots/settings_tab_chat.png" width="620" alt="聊天室设置">
-
-**主题：紫罗兰**
-
-<img src="screenshots/theme-violet.png" width="620" alt="紫罗兰主题">
+<img src="screenshots/zh/browser-sync.png" width="860" alt="浏览器同步起始页">
 
 ## 功能特性
 

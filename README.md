@@ -12,44 +12,25 @@ A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, ma
 
 The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners and icons, a dark title bar, and a floating control island that rises from the bottom in fullscreen.
 
-![Main window](screenshots/main.png)
+![Main window](screenshots/en/main.png)
 
 ## Screenshots
 
-**Fullscreen control island**
+**Main window · English UI**
 
-<img src="screenshots/fullscreen-dock.png" width="820" alt="Fullscreen control island">
-
-**Settings · Streaming**
-
-<img src="screenshots/settings.png" width="620" alt="Settings">
-
-**Room password**
-
-<p>
-<img src="screenshots/host-password.png" width="320" alt="Host password setup">
-<img src="screenshots/room-password.png" width="260" alt="Client password prompt">
-</p>
-
-**Room members**
-
-<img src="screenshots/room_members_host.png" width="420" alt="Room members">
+<img src="screenshots/en/main.png" width="860" alt="Main window">
 
 **Room chat**
 
-<img src="screenshots/chat_main_host.png" width="760" alt="Room chat">
+<img src="screenshots/en/chat.png" width="860" alt="Room chat">
 
-**Danmaku**
+**Settings · Streaming**
 
-<img src="screenshots/danmaku_window.png" width="760" alt="Danmaku">
+<img src="screenshots/en/settings.png" width="620" alt="Settings · Streaming">
 
-**Chat room settings**
+**Browser sync · start page**
 
-<img src="screenshots/settings_tab_chat.png" width="620" alt="Chat room settings">
-
-**Theme: Violet**
-
-<img src="screenshots/theme-violet.png" width="620" alt="Violet theme">
+<img src="screenshots/en/browser-sync.png" width="860" alt="Browser sync start page">
 
 ## Features
 
