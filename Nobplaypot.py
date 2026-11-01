@@ -4015,7 +4015,8 @@ class _StreamDialogBase(tk.Toplevel):
     def __init__(self, master, title, width=460):
         super().__init__(master)
         self.withdraw()
-        self.title(title)
+        self._raw_title = title
+        self.title(tr(title))
         self.configure(bg=C.BG)
         self.resizable(False, False)
         self.transient(master)
