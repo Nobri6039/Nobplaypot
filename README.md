@@ -4,6 +4,8 @@
 
 # Nobplaypot
 
+<img src="Social media preview image.png" width="820" alt="Social media preview">
+
 A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, made for LAN co-watching: host a stream, let others join, protect the room with a password, and control playback / seeking / speed remotely.
 
 > 一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看。
@@ -62,6 +64,7 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - Anti-aliased icons and rounded corners; the play button is an analytically anti-aliased circle
 - 5 accent colors (Aurora / Violet / Teal / Rose / Amber) × 3 background tones (Midnight / Black / Slate)
 - Hover transition animations, which can be disabled in settings
+- Full English / 中文 UI switch (applied after Save), including every settings page, dialog and status line
 
 ### Fullscreen control island
 - Move the mouse toward the bottom of the screen and a rounded floating bar rises — it sits **above** the bottom edge instead of sticking to it
@@ -75,6 +78,12 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 - **Resilient playback**: the client VLC owns jitter, reordering and buffering; a watchdog restarts the local picture if the displayed-frame count stops advancing; a rotating-dot buffering overlay appears whenever the play button says "playing" and the picture is not advancing
 - State sync: file, position, duration, pause, speed; clients can remotely play / pause / seek / change speed, while volume and mute stay local
 - Room size and member list sync in real time, up to 32 people (configurable)
+
+### Browser sync (preview)
+- A second, lighter mode next to media streaming: **no video or audio is relayed**; only the page URL and playback position travel over the existing command port
+- The host and guests each drive their own system browser window; play / pause / seek / speed are mirrored in both directions, and a guest can change the page for everyone
+- Works with any free HTML5 video page — no DRM content, no downloading, no re-streaming of the picture
+- Only one TCP port is needed; no UDP media port is opened in this mode
 
 ### Room password
 - The host can enable a password when starting (on by default); the password stays on the host only

@@ -38,6 +38,7 @@
 依赖: pip install python-vlc tkinterdnd2
 """
 
+import base64
 import hashlib
 import hmac
 import http.server
@@ -48,6 +49,7 @@ import os
 import platform
 import queue
 import random
+import re
 import socket
 import socketserver
 import subprocess
@@ -60,11 +62,12 @@ import tkinter as tk
 import tkinter.font as tkfont
 import traceback
 import urllib.parse
+import urllib.request
 import uuid
 from logging.handlers import RotatingFileHandler
 
 APP_TITLE = "Nobplaypot"
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.2.3"
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA") or os.path.expanduser("~"), "Nobplaypot"
 )
@@ -176,6 +179,7 @@ DANMAKU_AREAS = (
 DEFAULT_SETTINGS = {
     # 常规
     "username": "",
+    "language": "zh",           # zh / en
     "decode_mode": "auto",      # auto / hardware / software
     "volume": 80,
     "seek_step": 5,             # 快进/快退秒数
@@ -264,6 +268,575 @@ SURFACE_LABELS = {"midnight": "深蓝黑", "black": "纯黑", "slate": "岩灰"}
 ANIMATIONS_ENABLED = True
 
 DECODE_LABELS = {"auto": "自动", "hardware": "硬件解码", "software": "软件解码"}
+
+# ---------------------------------------------------------------------------
+# 界面语言: 中文 / English
+# 说明: 设置里切换后立即生效; 通过遍历控件把中文文本替换成英文。
+# 新增 UI 文案时, 把中文原文加到 I18N 里即可被自动翻译。
+# ---------------------------------------------------------------------------
+LANG = "zh"
+
+I18N = {
+    # 主窗口 / 控制栏
+    "打开文件": "Open File",
+    "房间成员": "Room Members",
+    "音轨 / 字幕": "Audio / Subtitles",
+    "流式传输 (主持 / 加入)": "Stream (Host / Join)",
+    "查看房间成员": "View room members",
+    "打开视频文件 (Ctrl+O)": "Open video file (Ctrl+O)",
+    "后退 (←)": "Back (←)",
+    "播放 / 暂停 (空格)": "Play / Pause (Space)",
+    "快进 (→)": "Forward (→)",
+    "停止": "Stop",
+    "全屏 (F)": "Fullscreen (F)",
+    "设置": "Settings",
+    "切换音轨 / 字幕": "Switch audio / subtitles",
+    # 空状态
+    "把视频文件拖到这里，或选择本地文件": "Drag a video here, or choose a local file",
+    "选择视频文件": "Choose Video",
+    # 聊天
+    "房间聊天": "Room Chat",
+    "发送": "Send",
+    # 提示框
+    "知道了": "OK",
+    "关闭": "Close",
+    "取消": "Cancel",
+    "保存": "Save",
+    "确定": "OK",
+    # 设置: 选项卡 / 页面
+    "常规": "General",
+    "外观": "Appearance",
+    "聊天室": "Chat",
+    "流式传输": "Streaming",
+    "解码方式与应用行为。": "Decode mode and application behavior.",
+    "调整强调色与界面底色; 改动需要重启软件后生效。": "Accent colour and surface tone; changes take effect after restart.",
+    "用户名、聊天记录与弹幕显示。": "Username, chat history and danmaku display.",
+    "推流参数、端口与客户端缓冲。": "Streaming parameters, ports and client buffering.",
+    "界面语言 / Language": "Interface language / 界面语言",
+    "保存后生效（重启后仍然生效）": "Takes effect after Save (persists after restart)",
+    "中文": "中文",
+    "English": "English",
+    # 设置: 常规
+    "解码方式": "Decode mode",
+    "硬件解码更省 CPU; 切换后需要重启软件生效。（重启生效）": "Hardware decoding saves CPU; takes effect after restart.",
+    "默认音量": "Default volume",
+    "打开软件时的初始音量": "Initial volume when the app starts",
+    "快进/快退步长": "Seek step",
+    "方向键与快进按钮的跳转秒数": "Seconds per arrow-key / skip-button jump",
+    "打开文件后自动播放": "Autoplay on open",
+    "记住上次打开的目录": "Remember last folder",
+    "文件选择框从上次浏览的位置开始": "The file picker starts from the last folder",
+    "日志级别": "Log level",
+    "排查问题时可以调到 DEBUG": "Set to DEBUG when troubleshooting",
+    # 设置: 外观
+    "强调色": "Accent colour",
+    "按钮、进度条与高亮使用的颜色（重启生效）": "Colour used by buttons, progress bar and highlights (restart)",
+    "界面底色": "Surface tone",
+    "控制栏、卡片与输入框的底色（重启生效）": "Background of deck, cards and inputs (restart)",
+    "悬停动画": "Hover animation",
+    "关闭后按钮与滑块的悬停变化直接切换": "When off, buttons and sliders switch instantly on hover",
+    "缓冲提示缩放": "Buffering hint scale",
+    "视频中央「缓冲中」动画的大小倍数": "Size multiplier of the central buffering animation",
+    # 设置: 聊天
+    "用户名": "Username",
+    "加入房间时显示的名称（4–32 个字符）": "Name shown when joining a room (4–32 characters)",
+    "成员消息频率上限": "Member message rate limit",
+    "每名成员每分钟最多发送的聊天消息数": "Max chat messages per member per minute",
+    "聊天记录上限": "Chat history limit",
+    "最多保留的聊天消息条数": "Maximum number of chat messages kept",
+    "弹幕": "Danmaku",
+    "消息弹幕": "Message danmaku",
+    "把新聊天消息以弹幕形式飘过视频": "Float new chat messages across the video as danmaku",
+    "弹幕字号": "Danmaku font size",
+    "弹幕速度": "Danmaku speed",
+    "弹幕颜色": "Danmaku colour",
+    "弹幕显示区域": "Danmaku area",
+    # 设置: 流式传输
+    "最大客户端数": "Max clients",
+    "房间人数上限": "Max room members",
+    "启用密码时需要填写房间密码": "A password is required when enabled",
+    "主持: 开放指令/流端口, 把当前播放推给其他设备\n加入: 接收并渲染主持推来的画面(播放控制交给主持执行)":
+        "Host: opens the command/media ports and pushes the current playback\nJoin: receives and renders the host's stream (playback is controlled by the host)",
+    "同时允许加入的房客数量": "Number of guests that may join at once",
+    "带宽上限": "Bandwidth limit",
+    "视频码率上限 (kbps)": "Video bitrate cap (kbps)",
+    "分辨率": "Resolution",
+    "转码输出分辨率; 1x 流复制不受影响": "Transcode output resolution; 1x stream copy is unaffected",
+    "帧率": "Frame rate",
+    "转码输出帧率": "Transcode output frame rate",
+    "音频码率": "Audio bitrate",
+    "x264 预设": "x264 preset",
+    "越快 CPU 占用越低, 画质略降": "Faster presets use less CPU with slightly lower quality",
+    "关键帧间隔": "Keyframe interval",
+    "数值越小, 客户端起播与跳转越快": "Smaller values start and seek faster on the client",
+    "客户端缓冲": "Client buffer",
+    "接收端缓冲, 网络抖动大时可调高": "Receive buffer; raise it when the network jitters",
+    "心跳间隔": "Heartbeat interval",
+    "指令端口心跳包间隔": "Heartbeat interval on the command channel",
+    "离线判定": "Offline timeout",
+    "超过这个时间没有心跳就判定客户端离线": "A client without a heartbeat for this long is considered offline",
+    "默认指令端口": "Default command port",
+    "主持/加入对话框的默认值": "Default value in the host / join dialog",
+    "默认媒体端口": "Default media port",
+    "UDP 媒体流的默认端口": "Default port of the UDP media stream",
+    "端口必须是数字": "Ports must be numbers",
+    "用户名长度需要 4–32 个字符": "Username must be 4–32 characters",
+    "指令端口和流端口不能相同": "Command port and media port must differ",
+    # 流式传输入口
+    "主持": "Host",
+    "停止主持": "Stop Hosting",
+    "已停止主持": "Hosting stopped",
+    "无法加入": "Cannot join",
+    "当前正在主持会话, 请先停止主持。": "You are already hosting a session. Stop it first.",
+    "加入": "Join",
+    "开始主持": "Start Hosting",
+    "加入房间": "Join Room",
+    "指令端口": "Command port",
+    "媒体端口（主持监听）": "Media port (host listen)",
+    "启用房间密码": "Enable room password",
+    "媒体端口": "Media port",
+    "房间密码": "Room password",
+    "主持流式传输": "Host Streaming",
+    "加入流式传输": "Join Streaming",
+    "一台设备主持播放并推流, 其他设备加入后同步观看与遥控。":
+        "One device hosts and streams; others join to watch and control together.",
+    "开放 TCP 指令端口与媒体端口; 客户端主动连入媒体端口, 主持端转码后经可靠 TCP 推流。":
+        "Opens the TCP command port and the media port; clients connect to the media port and the host pushes a reliable TCP stream.",
+    "客户端加入时由主持端核验": "Verified by the host when a client joins",
+    "密码只保存在主持端, 不会随房间信息发给客户端。":
+        "The password is kept on the host and never sent to clients.",
+    "填写主持的指令地址, 以及主持的媒体流地址\n(客户端主动连接主持的媒体端口, 本机无需开放任何入站端口)。":
+        "Enter the host's command address and media stream address\n(clients connect out to the host, no inbound port needed).",
+    "指令地址": "Command address",
+    "主持流地址": "Media address",
+    "加入会话": "Join Session",
+    "还没有消息，打个招呼吧": "No messages yet. Say hi!",
+    "主持可移除房客": "The host can remove guests",
+    "仅主持可移除成员": "Only the host can remove members",
+    "启用房间密码": "Enable room password",
+    "密码": "Password",
+    "房客加入时需要输入密码": "Guests must enter this password to join",
+    "主持端会显示本机地址": "The host shows the local address",
+    "正在连接...": "Connecting...",
+    "已连接": "Connected",
+    "已断开": "Disconnected",
+    "连接断开": "Disconnected",
+    "就绪": "Ready",
+    "播放结束": "Playback finished",
+    "播放出错, 文件可能损坏或格式不受支持": "Playback error: the file may be corrupted or unsupported",
+    "缓冲中…": "Buffering…",
+    "缓冲中": "Buffering",
+    "自动": "Auto",
+    "硬件解码": "Hardware",
+    "软件解码": "Software",
+    "恢复默认": "Reset to defaults",
+    "空格 播放/暂停    ← → 快退/快进    F 全屏    Ctrl+L 日志":
+        "Space Play/Pause    ← → Seek    F Fullscreen    Ctrl+L Log",
+    "浏览器同步（预览）": "Browser Sync (preview)",
+    "浏览器同步: 不推流, 只同步网页地址与播放进度(仅 HTML5 内容)":
+        "Browser sync: no media push, only page URL and playback position (HTML5 only)",
+    "浏览器同步已开始 · 在浏览器窗口里打开视频页面":
+        "Browser sync started · open a video page in the browser window",
+    "已加入浏览器同步房间 · 等待主持端操作":
+        "Joined browser sync room · waiting for the host",
+    "未找到 Edge": "Edge not found",
+    "浏览器同步模式需要系统安装 Microsoft Edge。":
+        "Browser sync needs Microsoft Edge installed.",
+    "浏览器启动失败": "Failed to start the browser",
+    # 设置: 分页与页面标题
+    "常规": "General",
+    "外观": "Appearance",
+    "聊天室": "Chat",
+    "解码方式与应用行为。": "Decode mode and application behavior.",
+    "调整强调色与界面底色; 改动需要重启软件后生效。":
+        "Adjust the accent colour and surface; restarts required.",
+    "用户名、聊天记录与弹幕显示。": "Username, chat history and danmaku display.",
+    "推流参数、端口与客户端缓冲。": "Stream parameters, ports and client buffer.",
+    # 常规
+    "解码方式": "Decode mode",
+    "硬件解码更省 CPU; 切换后需要重启软件生效。（重启生效）":
+        "Hardware decoding saves CPU; takes effect after restart.",
+    "默认音量": "Default volume",
+    "打开软件时的初始音量": "Initial volume when the app starts",
+    "快进/快退步长": "Seek step",
+    "方向键与快进按钮的跳转秒数": "Seconds per arrow-key / skip-button jump",
+    "打开文件后自动播放": "Autoplay on open",
+    "记住上次打开的目录": "Remember last folder",
+    "文件选择框从上次浏览的位置开始": "The file picker starts from the last folder",
+    "日志级别": "Log level",
+    "排查问题时可以调到 DEBUG": "Set to DEBUG when troubleshooting",
+    # 外观
+    "强调色": "Accent colour",
+    "按钮、进度条与高亮使用的颜色（重启生效）":
+        "Colour for buttons, progress and highlights (restart required)",
+    "界面底色": "Surface",
+    "控制栏、卡片与输入框的底色（重启生效）":
+        "Background of the deck, cards and inputs (restart required)",
+    "悬停动画": "Hover animation",
+    "关闭后按钮与滑块的悬停变化直接切换":
+        "Disabling makes hover changes switch instantly",
+    "缓冲提示缩放": "Buffering indicator scale",
+    "视频中央「缓冲中」动画的大小倍数":
+        "Size multiplier of the centre “Buffering” animation",
+    "极光蓝": "Aurora",
+    "紫罗兰": "Violet",
+    "青碧": "Teal",
+    "玫瑰": "Rose",
+    "琥珀": "Amber",
+    "深蓝黑": "Deep Navy",
+    "纯黑": "Pure Black",
+    "岩灰": "Rock Grey",
+    # 聊天
+    "用户名": "Username",
+    "加入房间时显示的名称（4–32 个字符）":
+        "Name shown when joining a room (4–32 characters)",
+    "成员消息频率上限": "Member message rate limit",
+    "每名成员每分钟最多发送的聊天消息数":
+        "Max chat messages per member per minute",
+    "聊天记录上限": "Chat history limit",
+    "最多保留的聊天消息条数": "Max chat messages to keep",
+    "弹幕": "Danmaku",
+    "消息弹幕": "Message danmaku",
+    "把新聊天消息以弹幕形式飘过视频":
+        "Float new chat messages over the video as danmaku",
+    "弹幕字号": "Danmaku size",
+    "弹幕速度": "Danmaku speed",
+    "弹幕颜色": "Danmaku colour",
+    "弹幕显示区域": "Danmaku area",
+    "白色": "White",
+    "黄色": "Yellow",
+    "青色": "Cyan",
+    "粉色": "Pink",
+    "绿色": "Green",
+    "橙色": "Orange",
+    "蓝色": "Blue",
+    "紫色": "Purple",
+    "全屏": "Fullscreen",
+    "上方 50%": "Top 50%",
+    "上方 40%": "Top 40%",
+    "上方 30%": "Top 30%",
+    "上方 20%": "Top 20%",
+    # 流式设置
+    "最大客户端数": "Max clients",
+    "房间人数上限": "Max room members",
+    "启用密码时需要填写房间密码": "A password is required when enabled",
+    "主持: 开放指令/流端口, 把当前播放推给其他设备\n加入: 接收并渲染主持推来的画面(播放控制交给主持执行)":
+        "Host: opens the command/media ports and pushes the current playback\nJoin: receives and renders the host's stream (playback is controlled by the host)",
+    "同时允许加入的房客数量": "Guests allowed to join at once",
+    "带宽上限": "Bandwidth limit",
+    "视频码率上限 (kbps)": "Video bitrate limit (kbps)",
+    "分辨率": "Resolution",
+    "转码输出分辨率; 1x 流复制不受影响":
+        "Transcode output resolution; 1x stream copy is unaffected",
+    "帧率": "Frame rate",
+    "转码输出帧率": "Transcode output frame rate",
+    "音频码率": "Audio bitrate",
+    "x264 预设": "x264 preset",
+    "越快 CPU 占用越低, 画质略降":
+        "Faster presets use less CPU with slightly lower quality",
+    "关键帧间隔": "Keyframe interval",
+    "数值越小, 客户端起播与跳转越快":
+        "Smaller values start and seek faster on clients",
+    "客户端缓冲": "Client buffer",
+    "接收端缓冲, 网络抖动大时可调高":
+        "Receive buffer, raise it when the network jitters",
+    "心跳间隔": "Heartbeat interval",
+    "指令端口心跳包间隔": "Heartbeat interval on the command port",
+    "离线判定": "Offline timeout",
+    "超过这个时间没有心跳就判定客户端离线":
+        "A client without a heartbeat for this long is offline",
+    "默认指令端口": "Default command port",
+    "主持/加入对话框的默认值": "Default value in the host/join dialogs",
+    "默认媒体端口": "Default media port",
+    "UDP 媒体流的默认端口": "Default port of the UDP media stream",
+    # 错误与提示
+    "保存配置失败": "Failed to save configuration",
+    "端口必须是数字": "Ports must be numbers",
+    "用户名长度需要 4–32 个字符": "Username must be 4–32 characters",
+    "指令端口和流端口不能相同":
+        "Command port and media port must differ",
+    "开始主持": "Start Hosting",
+    "加入房间": "Join Room",
+    "加入": "Join",
+    "密码": "Password",
+    "房客加入时需要输入密码": "Guests need a password to join",
+    "主持端会显示本机地址": "The host shows the local address",
+    "指令端口": "Command port",
+    "媒体端口": "Media port",
+    "正在连接...": "Connecting…",
+    "已连接": "Connected",
+    "已断开": "Disconnected",
+    "连接断开": "Connection lost",
+    "就绪": "Ready",
+    "播放结束": "Playback finished",
+    "播放出错, 文件可能损坏或格式不受支持":
+        "Playback error: the file may be damaged or unsupported",
+    "房间成员": "Room Members",
+    # 文件选择框
+    "这里没有可显示的文件": "No files to show here",
+    "换个文件夹，或把筛选切换为「所有文件」":
+        "Try another folder, or switch the filter to “All files”",
+    "打开视频": "Open Video",
+    "上一级": "Up",
+    "快速访问": "Quick access",
+    "桌面": "Desktop",
+    "下载": "Downloads",
+    "视频": "Videos",
+    "文档": "Documents",
+    "用户目录": "Home",
+    "磁盘": "Drives",
+    "视频文件": "Video files",
+    "所有文件": "All files",
+    "打开": "Open",
+    # 状态/错误
+    "原生": "Native",
+    "不可用": "Unavailable",
+    "未知": "Unknown",
+    "无": "None",
+    "请先完成房间验证": "Please complete room verification first",
+    "密码错误": "Wrong password",
+    "房间需要密码": "This room requires a password",
+    "房间人数已满": "The room is full",
+    "主持将你移出房间": "The host removed you from the room",
+    "流式消息过大": "Stream message too large",
+    "源文件无法转封装为 TS(编码可能不受支持)":
+        "Cannot remux the source to TS (codec may be unsupported)",
+    "推流源转封装失败": "Failed to remux the stream source",
+    "重建推流": "Rebuild stream",
+    "未捕获异常": "Uncaught exception",
+    "解析": "Parse",
+    "重新开始": "Restart",
+    "抢占": "Preempt",
+    "正在主持流式会话": "Hosting a streaming session",
+    "退出会话": "Leave session",
+    "已加入流式会话": "Joined the streaming session",
+    "端口必须是 1-65535 之间的数字": "Port must be between 1 and 65535",
+    "房间密码最长 64 个字符": "Room password can be at most 64 characters",
+    "请输入房间密码": "Enter the room password",
+    "指令地址格式不对, 例如 127.0.0.1:5000": "Invalid command address, e.g. 127.0.0.1:5000",
+    "同一成员两次发言的最小间隔": "Minimum gap between two messages from one member",
+    "无限制": "Unlimited",
+    "1 秒": "1 s",
+    "2 秒": "2 s",
+    "3 秒": "3 s",
+    "5 秒": "5 s",
+    "主持端保存的聊天消息条数": "Chat messages the host keeps",
+    "新聊天消息以弹幕浮动在视频上": "New chat messages float over the video as danmaku",
+    "弹幕大小": "Danmaku size",
+    "基础字号, 会随视频尺寸自动缩放": "Base font size, scales with the video size",
+    "数值越大, 弹幕移动越快": "Higher values move danmaku faster",
+    "弹幕区域": "Danmaku area",
+    "弹幕只出现在视频上方的区域": "Danmaku only appears over the video area",
+    "包括主持自己, 2-32 人": "Including the host, 2-32 people",
+    "单客户端带宽上限": "Per-client bandwidth cap",
+    "转码目标码率, 越高越清晰也越占带宽": "Transcode bitrate: higher is sharper, uses more bandwidth",
+    "推流分辨率": "Stream resolution",
+    "按视频高度缩放, 不会放大原片": "Scaled by video height, never upscaled",
+    "推流帧率": "Stream frame rate",
+    "x264 编码预设": "x264 encoding preset",
+    "越快越省 CPU, 画质略低": "Faster presets save CPU with slightly lower quality",
+    "主持端监听的默认 TCP 媒体端口": "Default TCP media port the host listens on",
+    "我": "Me",
+    "踢出": "Kick",
+    "等待主持开始播放": "Waiting for the host to start playback",
+    "画面仅主持端渲染 · 本机只同步状态与控制": "Rendered on the host · this PC syncs state and controls",
+    "客户端直接渲染主持推流 · 控制指令交给主持执行": "This client renders the host stream · controls go to the host",
+    "重连后会自动恢复同步": "Sync resumes after reconnecting",
+    "可用": "Available",
+    "静音": "Mute",
+    "播放 / 暂停": "Play / Pause",
+    "后退": "Back",
+    "快进": "Forward",
+    "退出全屏 (Esc)": "Exit fullscreen (Esc)",
+    "播放": "Play",
+    "暂停": "Pause",
+    "浏览器已关闭 · 已结束房间": "Browser closed · room ended",
+    "浏览器已关闭 · 已退出房间": "Browser closed · left the room",
+    "浏览器未就绪": "Browser not ready",
+    "打开网址": "Open URL",
+    "输入网址：": "Enter a URL:",
+    "正在打开 · ": "Opening · ",
+    "已重新连接 · 等待同步": "Reconnected · waiting for sync",
+    "已连接主持 · 等待同步": "Connected to host · waiting for sync",
+    "连接失败": "Connection failed",
+    "无法主持": "Cannot host",
+    "无法开始主持": "Cannot start hosting",
+    "开启": "On",
+    "· 密码": "· Password",
+    "主持已停止会话": "The host stopped the session",
+    "停止主持流式": "Stop hosting",
+    "成员": "Members",
+    "不在房间中, 无法发送消息": "Not in a room, cannot send",
+    "点击停止主持": "Click to stop hosting",
+    "点击退出会话": "Click to leave the session",
+    "流端口不可用": "Stream port unavailable",
+    "已退出流式会话": "Left the streaming session",
+    "房间需要密码, 等待输入": "Room needs a password",
+    "你已被主持移出房间": "You were removed from the room by the host",
+    "未知错误": "Unknown error",
+    "界面初始化完成": "UI initialised",
+    "应用图标设置失败": "Failed to set the app icon",
+    "内置浏览器启动失败": "Failed to launch the built-in browser",
+    "时间轴发生变化(换片/跳转/重建)时通知客户端重连流.": "Tell clients to reconnect when the timeline changes.",
+    "设置": "Settings",
+    "聊天室": "Chat",
+    "流式传输": "Streaming",
+    "流式传输设置": "Streaming settings",
+    "设置已保存": "Settings saved",
+    "设置已保存 · 外观/解码设置重启后生效": "Settings saved · appearance/decode changes apply after restart",
+    "主持端推流参数; 修改后在下次重建推流（客户端加入/换片）时生效。":
+        "Host streaming parameters; applied on the next stream rebuild (client joins / clip change).",
+    "主持: 开放指令/流端口, 把当前播放推给其他设备\n"
+    "加入: 接收并渲染主持推来的画面(播放控制交给主持执行)\n"
+    "浏览器同步: 不推流, 只同步网页地址与播放进度(仅 HTML5 内容)":
+        "Host: open command/media ports and push the current playback to other devices\n"
+        "Join: receive and render the host stream (playback controls run on the host)\n"
+        "Browser Sync: no streaming, only the page URL and playback position (HTML5 only)",
+
+}
+
+STATUS_PATTERNS = (
+    (re.compile(r"^正在播放 (.+)$"), r"Now playing \1"),
+    (re.compile(r"^正在连接 (.+)$"), r"Connecting to \1"),
+    (re.compile(r"^已加入房间 (.+)$"), r"Joined room \1"),
+    (re.compile(r"^房间已满"), r"Room is full"),
+    (re.compile(r"^(\d+) 秒$"), r"\1 s"),
+    (re.compile(r"^(\d+) 帧$"), r"\1 frames"),
+    (re.compile(r"^(\d+) 条$"), r"\1 messages"),
+    (re.compile(r"^共 (\d+) 人$"), r"\1 people"),
+    (re.compile(r"^(\d+) 人$"), r"\1 people"),
+    (re.compile(r"^主持流式 · 指令 (\d+) · 流 (\d+) · 房间 (\d+) 人 · 密码$"),
+     r"Hosting: cmd \1 · media \2 · \3 people · password"),
+    (re.compile(r"^主持流式 · 指令 (\d+) · 流 (\d+) · 房间 (\d+) 人$"),
+     r"Hosting: cmd \1 · media \2 · \3 people"),
+    (re.compile(r"^指令端口 (\d+) · 流端口 (\d+) · 房间 (\d+) 人$"),
+     r"Command port \1 · media port \2 · \3 people"),
+    (re.compile(r"^主持 (.*) · 房间 (\d+) 人$"), r"Host \1 · Room \2"),
+    (re.compile(r"^与主持同步播放 · 房间 (\d+) 人 · 主持 (.*)$"),
+     r"Synced with host · Room \1 · Host \2"),
+    (re.compile(r"^客户端-(.+)$"), r"client-\1"),
+    (re.compile(r"^(\d+) 条新消息 ↓$"), r"\1 new messages ↓"),
+    (re.compile(r"^(\d+) 个项目$"), r"\1 items"),
+    (re.compile(r"^(\d+(?:\.\d+)?) 秒$"), r"\1 s"),
+    (re.compile(r"^指令 (\d+) · 流 (\d+)$"), r"Cmd \1 · Stream \2"),
+    (re.compile(r"^主持中 · 房间 (\d+) 人 · 指令 (\d+) / 流 (\d+)(.*)$", re.S),
+     r"Hosting · Room \1 · Cmd \2 · Stream \3\4"),
+    (re.compile(r"^正在打开 · (.+)$"), r"Opening · \1"),
+    (re.compile(r"^已请求跳转 · 等待主持端确认$"), r"Seek requested · waiting for host"),
+    (re.compile(r"^已请求播放速度 (.+)$"), r"Speed requested \1"),
+)
+
+
+REVERSE_I18N = {value: key for key, value in I18N.items()}
+
+REVERSE_PATTERNS = (
+    (re.compile(r"^Now playing (.+)$"), r"正在播放 \1"),
+    (re.compile(r"^Connecting to (.+)$"), r"正在连接 \1"),
+    (re.compile(r"^Joined room (.+)$"), r"已加入房间 \1"),
+    (re.compile(r"^(\d+) people$"), r"共 \1 人"),
+    (re.compile(r"^Hosting: cmd (\d+) · media (\d+) · (\d+) people · password$"),
+     r"主持流式 · 指令 \1 · 流 \2 · 房间 \3 人 · 密码"),
+    (re.compile(r"^Hosting: cmd (\d+) · media (\d+) · (\d+) people$"),
+     r"主持流式 · 指令 \1 · 流 \2 · 房间 \3 人"),
+    (re.compile(r"^Host (.*) · Room (\d+) people$"), r"主持 \1 · 房间 \2 人"),
+    (re.compile(r"^Synced with host · Room (\d+) people · Host (.*)$"),
+     r"与主持同步播放 · 房间 \1 人 · 主持 \2"),
+    (re.compile(r"^client-(.+)$"), r"客户端-\1"),
+    (re.compile(r"^(\d+) new messages ↓$"), r"\1 条新消息 ↓"),
+    (re.compile(r"^(\d+) items$"), r"\1 个项目"),
+    (re.compile(r"^(\d+) messages$"), r"\1 条"),
+    (re.compile(r"^(\d+) frames$"), r"\1 帧"),
+    (re.compile(r"^(\d+) new messages ↓$"), r"\1 条新消息 ↓"),
+    (re.compile(r"^Hosting · Room (\d+) · Cmd (\d+) · Stream (\d+)(.*)$", re.S),
+     r"主持中 · 房间 \1 人 · 指令 \2 / 流 \3\4"),
+    (re.compile(r"^(\d+(?:\.\d+)?) s$"), r"\1 秒"),
+    (re.compile(r"^Cmd (\d+) · Stream (\d+)$"), r"指令 \1 · 流 \2"),
+    (re.compile(r"^Opening · (.+)$"), r"正在打开 · \1"),
+    (re.compile(r"^Command port (\d+) · media port (\d+) · (\d+) people$"),
+     r"指令端口 \1 · 流端口 \2 · 房间 \3 人"),
+)
+
+
+def tr(text):
+    """把界面中文翻译成当前语言; 切回中文时把英文反向翻回中文。"""
+    if not isinstance(text, str):
+        return text
+    if LANG == "en":
+        if text in I18N:
+            return I18N[text]
+        for pattern, repl in STATUS_PATTERNS:
+            if pattern.match(text):
+                return pattern.sub(repl, text)
+        return text
+    if text in REVERSE_I18N:
+        return REVERSE_I18N[text]
+    for pattern, repl in REVERSE_PATTERNS:
+        if pattern.match(text):
+            return pattern.sub(repl, text)
+    return text
+
+
+def _walk_translate(widget):
+    """递归遍历控件, 把中文文本替换成当前语言。"""
+    try:
+        if isinstance(widget, tk.Toplevel):
+            title = widget.title()
+            new_title = tr(title)
+            if new_title != title:
+                widget.title(new_title)
+    except (tk.TclError, AttributeError):
+        pass
+    try:
+        text = widget.cget("text")
+        if isinstance(text, str) and text:
+            new = tr(text)
+            if new != text:
+                widget.configure(text=new)
+    except (tk.TclError, AttributeError):
+        pass
+    try:
+        tip = getattr(widget, "_tooltip", None)
+        if isinstance(tip, str):
+            widget._tooltip = tr(tip)
+        elif tip is not None:
+            text = getattr(tip, "text", None)
+            if isinstance(text, str) and text:
+                tip.text = tr(text)
+    except Exception:
+        pass
+    # 自绘控件在 hover/重绘时用这些属性重新画文字, 只翻译 Canvas item 不够
+    for attr in ("_text", "_hint_text"):
+        try:
+            value = getattr(widget, attr, None)
+            if isinstance(value, str) and value:
+                setattr(widget, attr, tr(value))
+        except Exception:
+            pass
+    try:
+        if isinstance(widget, tk.Canvas):
+            for item in widget.find_all():
+                if widget.type(item) == "text":
+                    text = widget.itemcget(item, "text")
+                    if text:
+                        new = tr(text)
+                        if new != text:
+                            widget.itemconfigure(item, text=new)
+    except tk.TclError:
+        pass
+    try:
+        children = widget.winfo_children()
+    except tk.TclError:
+        return
+    for child in children:
+        _walk_translate(child)
+
+
+def apply_language(root, lang="zh"):
+    """设置全局语言并立即刷新整棵界面树。"""
+    global LANG
+    LANG = "en" if str(lang).lower() == "en" else "zh"
+    if root is not None:
+        _walk_translate(root)
 # 推流分辨率(按视频高度, 不会放大)
 RESOLUTION_OPTIONS = (("480p", "480p"), ("720p", "720p"),
                       ("1080p", "1080p"), ("native", "原生"))
@@ -2525,6 +3098,21 @@ class RoundedButton(HoverCanvas):
     # -------------------------------------------------------------- 绘制
     def _render(self):
         width, height = self._cw, self._ch
+        # 英文文案通常比中文长; 文字超出时自动加宽画布, 避免被裁掉
+        if self._text:
+            try:
+                text_width = self._font.measure(self._text)
+            except Exception:
+                text_width = 0
+            need = (text_width + self._pad_x * 2
+                    + (self._icon_size + 7 if self._icon else 0))
+            if need > width:
+                width = int(need)
+                self._cw = width
+                try:
+                    self.configure(width=width)
+                except tk.TclError:
+                    pass
         spec = self._spec
         mix_value = self._mix
         if not self._enabled:
@@ -2777,7 +3365,7 @@ class Dropdown(HoverCanvas):
         self.delete("all")
         draw_round_rect(self, 1, 1, width - 1, height - 1, 9, fill=fill,
                         outline=outline, width=1)
-        self.create_text(13, height / 2, text=self._var.get(), fill=C.TEXT,
+        self.create_text(13, height / 2, text=tr(self._var.get()), fill=C.TEXT,
                          font=self._font, anchor="w")
         icon_chevron(self, width - 14, height / 2, 16, C.TEXT_MUTED if not self._hovering else C.TEXT)
 
@@ -2797,7 +3385,7 @@ class Dropdown(HoverCanvas):
         current = self._var.get()
         for value in self._values:
             row = tk.Label(
-                holder, text=value, anchor="w", padx=14, pady=6,
+                holder, text=tr(value), anchor="w", padx=14, pady=6,
                 bg=C.SURFACE, fg=C.ACCENT if value == current else C.TEXT,
                 font=self._font,
             )
@@ -2896,7 +3484,7 @@ class EmptyStateView(tk.Canvas):
                           anchor="nw", image=circle)
         icon_play(self, cx, icon_cy, 24, C.ACCENT)
         self.create_text(cx, y0 + 116, text="Nobplaypot", fill=C.TEXT, font=ui_font(18, True))
-        self.create_text(cx, y0 + 148, text="把视频文件拖到这里，或选择本地文件",
+        self.create_text(cx, y0 + 148, text=tr("把视频文件拖到这里，或选择本地文件"),
                          fill=C.TEXT_MUTED, font=ui_font(10))
         self.create_text(cx, y0 + 178, text="MP4 · MKV · AVI · MOV · WEBM · TS · RMVB",
                          fill=C.TEXT_DIM, font=ui_font(9))
@@ -2906,7 +3494,7 @@ class EmptyStateView(tk.Canvas):
         fill = C.ACCENT_HOVER if self._hover_button else C.ACCENT
         draw_round_rect(self, bx0, by0, bx0 + button_w, by0 + button_h, 20,
                         fill=fill, outline=fill, width=1)
-        self.create_text(cx, by0 + button_h / 2, text="选择视频文件",
+        self.create_text(cx, by0 + button_h / 2, text=tr("选择视频文件"),
                          fill="#0A0D15", font=ui_font(10, True))
         self._button_rect = (bx0, by0, bx0 + button_w, by0 + button_h)
 
@@ -3411,7 +3999,7 @@ def _stream_field_row(parent, label_text, variable, width=24):
     row = tk.Frame(parent, bg=C.BG)
     row.pack(fill=tk.X, pady=5)
     tk.Label(row, text=label_text, bg=C.BG, fg=C.TEXT_MUTED, font=ui_font(10),
-             width=11, anchor="w").pack(side=tk.LEFT)
+             width=24, anchor="w").pack(side=tk.LEFT)
     entry = tk.Entry(
         row, textvariable=variable, bg=C.SURFACE, fg=C.TEXT, relief=tk.FLAT, bd=0,
         insertbackground=C.TEXT, highlightthickness=1, highlightbackground=C.STROKE,
@@ -3432,6 +4020,7 @@ class _StreamDialogBase(tk.Toplevel):
         self.resizable(False, False)
         self.transient(master)
         self.result = None
+        self._dialog_width = width
         self._drag_offset = None
         self._drag_active = False
         # 整个顶部区域(含标题下方留白)都能拖动, 不只是文字标签
@@ -3446,6 +4035,9 @@ class _StreamDialogBase(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self._on_escape())
         # 点窗口右上角关闭等同于取消, 保证 result/choice 一定有值
         self.protocol("WM_DELETE_WINDOW", lambda: self.finish(None))
+
+        # 子类还会继续加控件, 等构建完再统一翻译一次
+        self.after(10, lambda: _walk_translate(self))
 
     def _start_drag_top(self, event):
         self._drag_active = False
@@ -3480,8 +4072,10 @@ class _StreamDialogBase(tk.Toplevel):
 
     def present(self):
         self.update_idletasks()
-        position_center(self, self.master, self.winfo_reqwidth() + 8,
-                        self.winfo_reqheight())
+        # 以设计宽度为基准; 英文比中文长时可适度加宽, 但设上限, 剩余文本折行
+        width = max(self._dialog_width,
+                    min(self.winfo_reqwidth() + 8, self._dialog_width + 140))
+        position_center(self, self.master, width, self.winfo_reqheight())
         self.deiconify()
         apply_dark_titlebar(self, caption=C.BG)
         self.grab_set()
@@ -3501,7 +4095,7 @@ class _StreamDialogBase(tk.Toplevel):
 class StreamMenuDialog(_StreamDialogBase):
     """左下角流式按钮的入口菜单。"""
 
-    def __init__(self, master, mode, host_info="", join_info=""):
+    def __init__(self, master, mode, host_info="", join_info="", web=False):
         super().__init__(master, "流式传输", width=440)
         self.choice = None
         tk.Label(self.body, text="流式传输", bg=C.BG, fg=C.TEXT,
@@ -3518,11 +4112,17 @@ class StreamMenuDialog(_StreamDialogBase):
                 self.body, text="加入流式传输", variant="subtle", width=380, height=46,
                 bg=C.BG, command=lambda: self.finish("join"), font=ui_font(11),
             ).pack(fill=tk.X)
+            RoundedButton(
+                self.body, text="浏览器同步（预览）", variant="ghost", width=380, height=40,
+                bg=C.BG, command=lambda: self.finish("web"), font=ui_font(10),
+            ).pack(fill=tk.X, pady=(8, 0))
             tk.Label(
                 self.body,
-                text="主持: 开放指令/流端口, 把当前播放推给其他设备\n"
-                     "加入: 接收并渲染主持推来的画面(播放控制交给主持执行)",
+                text=tr("主持: 开放指令/流端口, 把当前播放推给其他设备\n"
+                        "加入: 接收并渲染主持推来的画面(播放控制交给主持执行)\n"
+                        "浏览器同步: 不推流, 只同步网页地址与播放进度(仅 HTML5 内容)"),
                 bg=C.BG, fg=C.TEXT_DIM, font=ui_font(9), anchor="w", justify=tk.LEFT,
+                wraplength=380,
             ).pack(fill=tk.X, pady=(14, 0))
         elif mode == "host":
             RoundedButton(
@@ -3540,6 +4140,11 @@ class StreamMenuDialog(_StreamDialogBase):
             tk.Label(self.body, text=join_info or "已加入流式会话", bg=C.BG,
                      fg=C.TEXT_MUTED, font=ui_font(9), anchor="w", justify=tk.LEFT,
                      wraplength=380).pack(fill=tk.X, pady=(14, 0))
+        if web:
+            RoundedButton(
+                self.body, text="打开网址…", variant="ghost", width=380, height=38,
+                bg=C.BG, command=lambda: self.finish("open_url"), font=ui_font(10),
+            ).pack(fill=tk.X, pady=(10, 0))
         self._footer("取消", self.finish, cancel=False)
 
     def finish(self, result=None):
@@ -3580,7 +4185,7 @@ class HostStreamDialog(_StreamDialogBase):
         password_row = tk.Frame(self.body, bg=C.BG)
         password_row.pack(fill=tk.X, pady=(10, 0))
         tk.Label(password_row, text="房间密码", bg=C.BG, fg=C.TEXT_MUTED,
-                 font=ui_font(9), width=8, anchor="w").pack(side=tk.LEFT)
+                 font=ui_font(9), width=24, anchor="w").pack(side=tk.LEFT)
         self.password_var = tk.StringVar(value="")
         self.password_entry = tk.Entry(
             password_row, textvariable=self.password_var, show="*",
@@ -3678,8 +4283,9 @@ class RoomPasswordDialog(_StreamDialogBase):
     def present_async(self):
         """非阻塞弹出: 客户端网络线程继续收主持的消息。"""
         self.update_idletasks()
-        position_center(self, self.master, self.winfo_reqwidth() + 8,
-                        self.winfo_reqheight())
+        width = max(self._dialog_width,
+                    min(self.winfo_reqwidth() + 8, self._dialog_width + 140))
+        position_center(self, self.master, width, self.winfo_reqheight())
         self.deiconify()
         self.lift()
         try:
@@ -3939,6 +4545,7 @@ class SettingsDialog(_StreamDialogBase):
             "streaming": self._build_streaming,
         }[key]
         builder(self._page_host)
+        _walk_translate(self._page_host)
         self._page_host.update_idletasks()
         self._refresh_scrollregion()
         self._scroll.yview_moveto(0)
@@ -4026,6 +4633,12 @@ class SettingsDialog(_StreamDialogBase):
     # -------------------------------------------------------------- 页面
     def _build_general(self, page):
         self._page_title(page, "常规", "解码方式与应用行为。")
+        row = self._row(page, "界面语言 / Language",
+                        "保存后生效（重启后仍然生效）")
+        self._dropdown(row, "language", [
+            ("zh", "中文"),
+            ("en", "English"),
+        ], on_change=lambda: self._on_language_changed(self._vars["language"].get()))
         row = self._row(page, "解码方式",
                         "硬件解码更省 CPU; 切换后需要重启软件生效。（重启生效）")
         self._dropdown(row, "decode_mode", [
@@ -4046,6 +4659,10 @@ class SettingsDialog(_StreamDialogBase):
             ("DEBUG", "DEBUG"), ("INFO", "INFO"),
             ("WARNING", "WARNING"), ("ERROR", "ERROR"),
         ])
+
+    def _on_language_changed(self, value):
+        # 只记录选择; 真正生效统一由「保存」触发, 与其它设置项保持一致
+        self._draft["language"] = value
 
     def _build_appearance(self, page):
         self._page_title(page, "外观",
@@ -4086,6 +4703,9 @@ class SettingsDialog(_StreamDialogBase):
 
         row = self._row(page, "悬停动画", "关闭后按钮与滑块的悬停变化直接切换")
         self._toggle(row, "animations")
+        row = self._row(page, "缓冲提示缩放", "视频中央「缓冲中」动画的大小倍数")
+        self._slider(row, "buffer_scale", 0.5, 2.5,
+                     lambda v: f"{v:.1f}x", width=200)
 
     def _build_chat(self, page):
         self._page_title(page, "聊天室", "用户名、聊天记录与弹幕显示。")
@@ -4148,9 +4768,6 @@ class SettingsDialog(_StreamDialogBase):
         row = self._row(page, "客户端缓冲", "接收端缓冲, 网络抖动大时可调高")
         self._slider(row, "client_caching", 200, 5000,
                      lambda v: f"{int(round(v))} ms", width=200)
-        row = self._row(page, "缓冲图标缩放", "视频中央「缓冲中」提示的大小倍数")
-        self._slider(row, "buffer_scale", 0.5, 2.5,
-                     lambda v: f"{v:.1f}x", width=200)
         row = self._row(page, "心跳间隔", "指令端口心跳包间隔")
         self._slider(row, "heartbeat", 1.0, 10.0, lambda v: f"{v:.1f} 秒")
         row = self._row(page, "离线判定", "超过这个时间没有心跳就判定客户端离线")
@@ -4292,13 +4909,14 @@ class RoomMembersDialog(tk.Toplevel):
     # ------------------------------------------------------------ 数据
     def update_room(self, members):
         self._members = list(members or [])
-        self.count_label.configure(text=f"共 {len(self._members)} 人")
+        self.count_label.configure(text=tr(f"共 {len(self._members)} 人"))
         for child in self._inner.winfo_children():
             child.destroy()
         for index, member in enumerate(self._members):
             self._build_row(index, member)
         self._inner.update_idletasks()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        _walk_translate(self._inner)
         self._update_scrollbar()
 
     def _build_row(self, index, member):
@@ -4932,26 +5550,30 @@ class DanmakuOverlay(tk.Canvas):
 
 
 class BufferingOverlay(tk.Canvas):
-    """视频区中央的透明「缓冲中」层: 多个小圆围绕成环, 随视频大小与设置缩放。"""
+    """视频区中央的透明「缓冲中」层: 圆点旋转 + Q弹 + 闪烁, 随视频大小与设置缩放。"""
 
     KEY = "#010203"
     DOTS = 8
     BASE_HEIGHT = 600.0
 
     def __init__(self, master):
-        super().__init__(master, width=200, height=200, bg=self.KEY,
+        super().__init__(master, width=220, height=220, bg=self.KEY,
                          highlightthickness=0, bd=0)
         self._job = None
         self._visible = False
-        self._head = 0
         self._scale = 1.0
         self._user_scale = 1.0
+        self._phase = 0.0
+        self._size = 220
         self._dots = []
+        self._sparkles = []
         self._text = None
+        self._fonts = {}
         self._layered_child()
         self._draw()
         master.bind("<Configure>", self._on_master_configure, add="+")
 
+    # ------------------------------------------------------------ 缩放
     def set_user_scale(self, scale):
         try:
             scale = float(scale)
@@ -4976,40 +5598,79 @@ class BufferingOverlay(tk.Canvas):
         self._scale = scale
         self._draw()
 
+    def _font(self, px):
+        px = max(6, int(round(px)))
+        font = self._fonts.get(px)
+        if font is None:
+            font = tkfont.Font(font=ui_font(px, True))
+            self._fonts[px] = font
+        return font
+
+    # ------------------------------------------------------------ 绘制
     def _draw(self):
         self.delete("all")
-        size = int(200 * self._scale)
+        size = int(220 * self._scale)
+        self._size = size
         self.configure(width=size, height=size)
         if self._visible:
             try:
                 self.place_configure(width=size, height=size)
             except tk.TclError:
                 pass
-        center = size / 2.0
-        ring = size * 0.30
-        dot_r = max(2.0, size * 0.035)
-        text_size = max(9, int(15 * self._scale))
-        ring_y = center - text_size * 0.9
+        cx = size / 2.0
+        ring_cy = size * 0.39
+        radius = size * 0.215
+        dot_px = max(6, size * 0.080)
+        text_px = max(10, size * 0.065)
+        self._text = self.create_text(
+            cx, size * 0.82, text="缓冲中…", fill="#FFFFFF",
+            font=self._font(text_px), anchor="center")
         self._dots = []
         for i in range(self.DOTS):
-            angle = -math.pi / 2 + i * (2 * math.pi / self.DOTS)
-            x = center + ring * math.cos(angle)
-            y = ring_y + ring * math.sin(angle)
-            item = self.create_oval(x - dot_r, y - dot_r, x + dot_r, y + dot_r,
-                                    fill="#FFFFFF", outline="")
-            self._dots.append(item)
-        self._text = self.create_text(center, size * 0.80, text="缓冲中",
-                                      fill="#FFFFFF", font=ui_font(text_size, True))
+            angle = -math.pi / 2 + i * 2 * math.pi / self.DOTS
+            x = cx + radius * math.cos(angle)
+            y = ring_cy + radius * math.sin(angle)
+            glow = self.create_text(x, y, text="●", fill="#1c2740",
+                                    font=self._font(dot_px * 1.55),
+                                    anchor="center")
+            dot = self.create_text(x, y, text="●", fill="#FFFFFF",
+                                   font=self._font(dot_px), anchor="center")
+            self._dots.append((glow, dot, i * (2 * math.pi / self.DOTS)))
+        self._sparkles = []
+        for i in range(4):
+            angle = -math.pi / 2 + (i + 0.5) * (2 * math.pi / 4)
+            x = cx + radius * 1.38 * math.cos(angle)
+            y = ring_cy + radius * 1.38 * math.sin(angle)
+            item = self.create_text(x, y, text="✦", fill="#2a3860",
+                                    font=self._font(dot_px * 0.55),
+                                    anchor="center")
+            self._sparkles.append((item, i * 1.9))
+        self._phase = 0.0
         self._paint()
 
     def _paint(self):
-        for i, item in enumerate(self._dots):
-            level = (i - self._head) % self.DOTS
-            ratio = 1.0 - level / float(self.DOTS)
-            value = int(60 + 195 * ratio)
+        size = self._size
+        base = max(6, size * 0.080)
+        t = self._phase
+        for glow, dot, offset in self._dots:
+            wave = 0.5 + 0.5 * math.cos(t - offset)
+            pulse = wave ** 2
+            breathe = 1.0 + 0.04 * math.sin(t * 0.7)
+            px = base * (0.68 + 0.62 * pulse) * breathe
+            value = int(65 + 190 * pulse)
             color = "#%02X%02X%02X" % (value, value, value)
+            gv = max(18, value // 6)
             try:
-                self.itemconfigure(item, fill=color)
+                self.itemconfigure(dot, fill=color, font=self._font(px))
+                self.itemconfigure(glow, fill="#%02X%02X%02X" % (gv, gv + 4, gv + 16),
+                                   font=self._font(px * 1.55))
+            except tk.TclError:
+                pass
+        for item, offset in self._sparkles:
+            tw = 0.5 + 0.5 * math.sin(t * 1.8 + offset)
+            value = int(40 + 150 * tw)
+            try:
+                self.itemconfigure(item, fill="#%02X%02X%02X" % (value, value, min(255, value + 55)))
             except tk.TclError:
                 pass
 
@@ -5057,9 +5718,13 @@ class BufferingOverlay(tk.Canvas):
         if not self._visible:
             self._job = None
             return
-        self._head = (self._head + 1) % self.DOTS
+        self._phase += 0.16
         self._paint()
-        self._job = self.after(90, self._tick)
+        self._raise_tick = (getattr(self, "_raise_tick", 0) + 1) % 10
+        if self._raise_tick == 0:
+            # VLC 的视频子窗口会周期重绘, 定期把透明层抬回最上面
+            self._raise_native()
+        self._job = self.after(33, self._tick)
 
 
 class StreamWatchView(tk.Canvas):
@@ -5134,7 +5799,11 @@ class VideoPlayerApp:
         setup_logging()
         install_excepthooks()
         self.root = root
+        # 后台线程 → 主线程的 UI 任务队列(Tk 不允许跨线程调用)
+        self._ui_queue = []
+        self._ui_queue_lock = threading.Lock()
         init_fonts(root)
+        self.root.after(40, self._drain_ui_queue)
         self.settings = load_settings()
         apply_appearance(self.settings)
         self._active_accent = self.settings["accent"]
@@ -5192,6 +5861,15 @@ class VideoPlayerApp:
         self._fs_dock_gap = 26
         self._fs_dock_radius = 26
         self._fs_dock_rect = None
+        self._fs_chat = None
+        self._fs_chat_panel = None
+        self._fs_chat_visible = False
+        self._fs_chat_typing = False
+        self._fs_chat_rect = None
+        self._fs_chat_hide_job = None
+        self._fs_chat_anim_job = None
+        self._fs_chat_animating = False
+        self._fs_chat_width = 360
         self.fs_play_button = None
         self._tick_job = None
         self._hwnd_attached = False
@@ -5279,6 +5957,7 @@ class VideoPlayerApp:
 
         self._build_ui()
         self._bind_shortcuts()
+        self.apply_language(self.settings.get("language", "zh"))
         self._init_player()
         self._enable_drag_and_drop()
         threading.Thread(target=_cleanup_relay_dir, daemon=True,
@@ -5390,6 +6069,13 @@ class VideoPlayerApp:
         )
         self.open_button.pack(side=tk.LEFT, padx=(10, 0))
 
+        # 多音轨 / 字幕切换: 仅当媒体存在多音轨或字幕时显示
+        self.track_button = RoundedButton(
+            left, text="音轨 / 字幕", variant="ghost", width=112, height=36, radius=9,
+            bg=C.DECK, command=self.open_track_menu,
+            tooltip="切换音轨 / 字幕",
+        )
+
         self.back_button = RoundedButton(
             left, variant="icon", width=36, height=36, radius=9, bg=C.DECK,
             icon=lambda cv, cx, cy, s, col: icon_skip(cv, cx, cy, s, col, -1),
@@ -5493,6 +6179,7 @@ class VideoPlayerApp:
         self._last_frame_ts = 0.0
         self._buffer_job = None
         self._build_fs_dock()
+        self._build_fs_chat()
         self.root.after(500, self._watch_danmaku)
         self.root.after(1000, self._client_watchdog)
         self.root.after(300, self._buffering_tick)
@@ -5578,13 +6265,144 @@ class VideoPlayerApp:
         self.fs_progress.pack(fill=tk.X, pady=(2, 0))
 
         self._fs_dock = dock
+        _walk_translate(dock)
         log.debug("全屏控制 dock 已创建")
 
+    # ---------------------------------------------------- 全屏右侧聊天面板
+    def _build_fs_chat(self):
+        """全屏时浮在屏幕右侧的聊天面板: 鼠标靠近右缘滑出, 可看消息/发消息。"""
+        chat = tk.Toplevel(self.root)
+        chat.withdraw()
+        chat.overrideredirect(True)
+        chat.configure(bg=C.BG)
+        try:
+            chat.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        panel = ChatPanel(chat, on_send=self._send_chat)
+        panel.pack(fill=tk.BOTH, expand=True)
+        _walk_translate(chat)
+        panel._max_rows = self._chat_limit()
+        panel.entry.bind("<FocusIn>", self._on_fs_chat_focus_in, add="+")
+        panel.entry.bind("<FocusOut>", self._on_fs_chat_focus_out, add="+")
+        chat.bind("<Escape>", lambda _e: self._hide_fs_chat())
+        chat.bind("<Enter>", lambda _e: self._cancel_fs_chat_hide())
+        chat.bind("<Leave>", lambda _e: self._schedule_fs_chat_hide())
+        self._fs_chat = chat
+        self._fs_chat_panel = panel
+        log.debug("全屏聊天面板已创建")
+
+    def _fs_chat_size(self):
+        left, top, sw, sh = self._fs_screen_rect()
+        width = 340
+        height = max(420, sh - 48)
+        x = left + sw - width - 18
+        y = top + (sh - height) // 2
+        return width, height, x, y
+
+    def _fs_chat_show_zone(self, px):
+        try:
+            left, _top, sw, _sh = self._fs_screen_rect()
+        except tk.TclError:
+            return False
+        right = left + sw
+        return left <= px <= right and px >= right - 6
+
+    def _fs_chat_zone(self, px, py):
+        rect = self._fs_chat_rect
+        if rect is None:
+            return False
+        x, y, w, h = rect
+        return (x - 14 <= px <= x + w + 14) and (y - 14 <= py <= y + h + 14)
+
+    def _on_fs_chat_focus_in(self, _event=None):
+        self._fs_chat_typing = True
+        self._cancel_fs_chat_hide()
+
+    def _on_fs_chat_focus_out(self, _event=None):
+        self._fs_chat_typing = False
+
+    def _show_fs_chat(self):
+        chat = self._fs_chat
+        if chat is None or self._fs_chat_visible:
+            return
+        if not (self._hosting or self._client_active):
+            return
+        self._fs_chat_visible = True
+        self._cancel_fs_chat_hide()
+        width, height, x, y = self._fs_chat_size()
+        self._fs_chat_rect = (x, y, width, height)
+        try:
+            left, _top, sw, _sh = self._fs_screen_rect()
+            right = left + sw
+            chat.geometry(f"{width}x{height}+{right + 10}+{y}")
+            chat.deiconify()
+            chat.lift()
+            chat.update_idletasks()
+            round_window_corners(chat, 20)
+        except tk.TclError:
+            return
+        self._animate_fs_chat(right + 10, x)
+
+    def _hide_fs_chat(self):
+        self._fs_chat_hide_job = None
+        if not self._fs_chat_visible or self._fs_chat is None:
+            return
+        self._fs_chat_visible = False
+        self._fs_chat_rect = None
+        try:
+            left, _top, sw, _sh = self._fs_screen_rect()
+            right = left + sw
+            current = self._fs_chat.winfo_x()
+        except tk.TclError:
+            return
+        self._animate_fs_chat(current, right + 10, hide_after=True)
+
+    def _animate_fs_chat(self, start_x, end_x, hide_after=False, step=0, steps=8):
+        chat = self._fs_chat
+        if chat is None:
+            return
+        self._fs_chat_animating = True
+        step += 1
+        ease = 1.0 - (1.0 - step / steps) ** 3
+        x = int(start_x + (end_x - start_x) * ease)
+        try:
+            width, height, _x, y = self._fs_chat_size()
+            chat.geometry(f"{width}x{height}+{x}+{y}")
+        except tk.TclError:
+            self._fs_chat_animating = False
+            return
+        if step < steps:
+            self._fs_chat_anim_job = self.root.after(
+                13, lambda: self._animate_fs_chat(start_x, end_x, hide_after, step, steps))
+            return
+        self._fs_chat_anim_job = None
+        self._fs_chat_animating = False
+        if hide_after:
+            try:
+                chat.withdraw()
+            except tk.TclError:
+                pass
+
+    def _schedule_fs_chat_hide(self):
+        if self._fs_chat_hide_job is not None:
+            return
+        self._fs_chat_hide_job = self.root.after(1600, self._hide_fs_chat)
+
+    def _cancel_fs_chat_hide(self):
+        if self._fs_chat_hide_job is not None:
+            try:
+                self.root.after_cancel(self._fs_chat_hide_job)
+            except tk.TclError:
+                pass
+            self._fs_chat_hide_job = None
+
     def _fs_dock_size(self):
-        sw, sh = self._fs_screen()
+        left, top, sw, sh = self._fs_screen_rect()
         width = min(900, max(560, int(sw * 0.62)))
         height = self._fs_dock_height
-        return width, height, (sw - width) // 2, sh - self._fs_dock_gap - height
+        return (width, height, left + (sw - width) // 2,
+                top + sh - self._fs_dock_gap - height)
 
     def _fs_dock_zone(self, px, py):
         rect = self._fs_dock_rect
@@ -5593,8 +6411,34 @@ class VideoPlayerApp:
         x, y, w, h = rect
         return (x - 10 <= px <= x + w + 10) and (y - 10 <= py <= y + h + self._fs_dock_gap + 10)
 
+    def _fs_screen_rect(self):
+        """当前全屏窗口所在显示器的 (left, top, width, height), 多显示器下不越界。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetAncestor(int(self.root.winfo_id()), 2)
+            if hwnd:
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [("cbSize", wintypes.DWORD),
+                                ("rcMonitor", wintypes.RECT),
+                                ("rcWork", wintypes.RECT),
+                                ("dwFlags", wintypes.DWORD)]
+                monitor = user32.MonitorFromWindow(hwnd, 2)
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(MONITORINFO)
+                if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                    rect = info.rcMonitor
+                    return (int(rect.left), int(rect.top),
+                            max(1, int(rect.right - rect.left)),
+                            max(1, int(rect.bottom - rect.top)))
+        except Exception:
+            pass
+        return (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+
     def _fs_screen(self):
-        return (self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+        _left, _top, width, height = self._fs_screen_rect()
+        return width, height
 
     def _sync_fs_dock_labels(self):
         if self._fs_dock is None:
@@ -5618,15 +6462,26 @@ class VideoPlayerApp:
             self._fs_poll_job = None
         self._cancel_fs_hide()
         self._cancel_fs_anim()
+        self._cancel_fs_chat_hide()
+        if self._fs_chat_anim_job is not None:
+            try:
+                self.root.after_cancel(self._fs_chat_anim_job)
+            except tk.TclError:
+                pass
+            self._fs_chat_anim_job = None
+        self._fs_chat_animating = False
 
-    def _fs_show_zone(self, py):
-        """底部显示区: 覆盖控制岛目标位置上方一段, 鼠标进入必出。"""
+    def _fs_show_zone(self, px, py):
+        """底部显示区: 只在全屏窗口所在显示器内生效。"""
         try:
-            _sw, sh = self._fs_screen()
+            left, top, sw, sh = self._fs_screen_rect()
             _w, height, _x, y = self._fs_dock_size()
         except tk.TclError:
             return False
-        return py >= max(0, min(sh, y - 40))
+        right = left + sw
+        if not (left <= px <= right):
+            return False
+        return py >= max(top, min(top + sh, y - 40))
 
     def _on_fs_motion(self, event):
         if not self._fullscreen:
@@ -5635,11 +6490,17 @@ class VideoPlayerApp:
             px, py = event.x_root, event.y_root
         except Exception:
             return
-        if self._fs_show_zone(py) or self._fs_dock_zone(px, py):
+        if self._fs_show_zone(px, py) or self._fs_dock_zone(px, py):
             if not self._fs_dock_visible:
                 self._show_fs_dock()
             else:
                 self._cancel_fs_hide()
+        if self._fs_chat is not None and (self._hosting or self._client_active):
+            if self._fs_chat_show_zone(px) or self._fs_chat_zone(px, py):
+                if not self._fs_chat_visible:
+                    self._show_fs_chat()
+                else:
+                    self._cancel_fs_chat_hide()
 
     def _fs_watch(self):
         self._fs_poll_job = None
@@ -5649,7 +6510,7 @@ class VideoPlayerApp:
             px, py = self.root.winfo_pointerxy()
         except tk.TclError:
             return
-        show_zone = self._fs_show_zone(py)
+        show_zone = self._fs_show_zone(px, py)
         dock_zone = self._fs_dock_zone(px, py)
         if not self._fs_dock_visible:
             if show_zone or dock_zone:
@@ -5659,6 +6520,17 @@ class VideoPlayerApp:
                 self._cancel_fs_hide()
             else:
                 self._schedule_fs_hide()
+        if self._fs_chat is not None and (self._hosting or self._client_active):
+            chat_show = self._fs_chat_show_zone(px)
+            chat_zone = self._fs_chat_zone(px, py)
+            if not self._fs_chat_visible:
+                if chat_show or chat_zone:
+                    self._show_fs_chat()
+            else:
+                if chat_zone or chat_show or self._fs_chat_typing:
+                    self._cancel_fs_chat_hide()
+                else:
+                    self._schedule_fs_chat_hide()
         self._fs_poll_job = self.root.after(80, self._fs_watch)
 
     def _schedule_fs_hide(self):
@@ -5692,15 +6564,16 @@ class VideoPlayerApp:
         width, height, x, y = self._fs_dock_size()
         self._fs_dock_rect = (x, y, width, height)
         try:
-            sw, sh = self._fs_screen()
-            dock.geometry(f"{width}x{height}+{x}+{sh + 10}")
+            _left, top, _sw, sh = self._fs_screen_rect()
+            hidden_y = top + sh + 10
+            dock.geometry(f"{width}x{height}+{x}+{hidden_y}")
             dock.deiconify()
             dock.lift()
             dock.update_idletasks()
             round_window_corners(dock, self._fs_dock_radius)
         except tk.TclError:
             return
-        self._animate_fs_dock(sh + 10, y)
+        self._animate_fs_dock(hidden_y, y)
 
     def _hide_fs_dock(self):
         self._fs_hide_job = None
@@ -5709,11 +6582,12 @@ class VideoPlayerApp:
         self._fs_dock_visible = False
         self._fs_dock_rect = None
         try:
-            _sw, sh = self._fs_screen()
+            _left, top, _sw, sh = self._fs_screen_rect()
+            hidden_y = top + sh + 10
             current = self._fs_dock.winfo_y()
         except tk.TclError:
             return
-        self._animate_fs_dock(current, sh + 10, hide_after=True)
+        self._animate_fs_dock(current, hidden_y, hide_after=True)
 
     def _animate_fs_dock(self, start_y, end_y, hide_after=False, step=0, steps=8):
         dock = self._fs_dock
@@ -5766,8 +6640,8 @@ class VideoPlayerApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _on_root_focus_out(self, _event=None):
-        """切到别的程序时收起全屏 dock(点在 dock 上时不算)。"""
-        if not self._fullscreen or not self._fs_dock_visible:
+        """切到别的程序时收起全屏 dock/聊天(指针还在面板上时不算)。"""
+        if not self._fullscreen or (not self._fs_dock_visible and not self._fs_chat_visible):
             return
         try:
             px, py = self.root.winfo_pointerxy()
@@ -5775,6 +6649,8 @@ class VideoPlayerApp:
             return
         if not self._fs_dock_zone(px, py):
             self._hide_fs_dock()
+        if not self._fs_chat_zone(px, py) and not self._fs_chat_show_zone(px):
+            self._hide_fs_chat()
 
     def _shortcut(self, action):
         # 避免在输入框里按空格等键时误触发
@@ -5783,6 +6659,526 @@ class VideoPlayerApp:
             return None
         action()
         return "break"
+
+    # ------------------------------------------------------ 浏览器同步模式
+    def _post_to_ui(self, fn):
+        """后台线程不要直接碰 Tk, 统一投递到主线程执行。"""
+        lock = getattr(self, "_ui_queue_lock", None)
+        if lock is None:
+            return
+        with lock:
+            self._ui_queue.append(fn)
+
+    def _drain_ui_queue(self):
+        jobs = []
+        lock = getattr(self, "_ui_queue_lock", None)
+        if lock is not None:
+            with lock:
+                if self._ui_queue:
+                    jobs = list(self._ui_queue)
+                    del self._ui_queue[:]
+        for job in jobs:
+            try:
+                job()
+            except Exception:
+                log.debug("UI 队列任务执行失败", exc_info=True)
+        try:
+            self.root.after(40, self._drain_ui_queue)
+        except Exception:
+            pass
+
+    _WEB_DEFAULTS = {
+        "_web_browser": None, "_web_mode": False, "_web_url": "", "_web_tab": "",
+        "_web_playing": False, "_web_last_send": 0.0, "_web_tabs_sig": (),
+        "_web_tabs_sent": 0.0, "_web_tabs_ready": False, "_web_open_pending": None,
+        "_web_tab_map": None, "_web_tab_open_ts": None, "_web_local_active": "",
+        "_web_ignore_local_until": 0.0, "_web_duration": 0.0, "_web_pos": 0.0,
+        "_web_dragging": False, "_web_rate": 0.0, "_web_hold_until": 0.0,
+        "_web_job": None, "_web_last_note": "", "_web_opening": False, "_web_token": 0,
+        "_browser_slot": 0, "_browser_profile": None, "_browser_lock": "",
+    }
+
+    def _web_ensure_fields(self):
+        for key, value in self._WEB_DEFAULTS.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
+        for key in ("_web_open_pending", "_web_tab_map", "_web_tab_open_ts"):
+            if getattr(self, key, None) is None:
+                setattr(self, key, {})
+
+    def _web_open_browser(self, url="", callback=None):
+        """异步拉起浏览器: 启动 Edge + 连 CDP 要 1~3 秒, 不能放在 Tk 线程里。"""
+        self._web_ensure_fields()
+        if self._web_browser is not None:
+            if url and url != self._web_url:
+                self._web_browser.navigate(url)
+            if callback is not None:
+                callback(True)
+            return self._web_browser
+        if self._web_opening:
+            return None
+        self._web_opening = True
+        self._web_token += 1
+        token = self._web_token
+        if not self._browser_profile:
+            slot, profile, lock = acquire_browser_slot()
+            self._browser_slot = slot
+            self._browser_profile = profile
+            self._browser_lock = lock
+            log.info("浏览器 profile 槽位: slot-%d (%s)", slot, profile)
+        profile_dir = self._browser_profile
+
+        def worker():
+            shell = EdgeBrowserShell(profile_dir, lang=self.settings.get("language", "zh"))
+            ok = False
+            error = ""
+            if not shell.available():
+                error = "未找到 Microsoft Edge, 浏览器同步模式需要系统安装 Edge。"
+            else:
+                try:
+                    shell.open(url)
+                    ok = True
+                except Exception as exc:
+                    log.exception("内置浏览器启动失败")
+                    error = str(exc)
+
+            def finish():
+                self._web_opening = False
+                if token != self._web_token:
+                    # 期间已经退出会话, 丢掉这个浏览器
+                    try:
+                        shell.close()
+                    except Exception:
+                        pass
+                    return
+                if ok:
+                    self._web_browser = shell
+                    self._web_url = url or ""
+                else:
+                    log.error("浏览器启动失败: %s", error)
+                    self._set_status("浏览器启动失败", "error")
+                    self._alert("浏览器启动失败", error)
+                if callback is not None:
+                    callback(ok)
+
+            try:
+                self._post_to_ui(finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, daemon=True, name="browser-open").start()
+        return None
+
+    def start_web_hosting(self, cmd_port, password=""):
+        """主持端: 先起同步房间, 浏览器在后台拉起(不阻塞界面)。"""
+        self._web_ensure_fields()
+        self._web_mode = True
+        self._web_url = ""
+        self.start_hosting(cmd_port, int(self.settings.get("udp_port", STREAM_DEFAULT_UDP_PORT)),
+                           password, web=True)
+        if not self._hosting:
+            self._web_mode = False
+            return
+        self._web_schedule_tick()
+        self._set_status("浏览器同步已开始 · 正在打开浏览器…", "ok")
+        self._web_open_browser("", callback=self._web_host_browser_ready)
+
+    def _web_host_browser_ready(self, ok):
+        if not ok:
+            return
+        self._set_status("浏览器同步已开始 · 在浏览器窗口里打开视频页面", "ok")
+
+    def _web_schedule_tick(self):
+        self._web_ensure_fields()
+        if self._web_job is not None:
+            try:
+                self.root.after_cancel(self._web_job)
+            except Exception:
+                pass
+            self._web_job = None
+        self._web_tick()
+
+    def _web_tick(self):
+        self._web_ensure_fields()
+        self._web_job = None
+        if self._closing:
+            return
+        browser = self._web_browser
+        if browser is not None and getattr(browser, "dead", False):
+            # 用户直接关掉了浏览器窗口 → 自动结束/退出房间
+            if self._hosting:
+                self._set_status("浏览器已关闭 · 已结束房间", "idle")
+                self.stop_hosting()
+            else:
+                self._set_status("浏览器已关闭 · 已退出房间", "idle")
+                self.leave_stream()
+            return
+        if self._web_mode and self._client_active and browser is not None:
+            self._web_report_local_url(browser)
+        if self._web_mode and self._hosting and browser is not None:
+            try:
+                state = browser.read_state() or {}
+            except Exception:
+                state = {}
+            url = str(state.get("url") or self._web_url or "")
+            tab = browser.attached_id
+            playing = bool(state.get("p"))
+            now = time.monotonic()
+            latch = getattr(self, "_web_seek_latch", None)
+            measured = float(state.get("t") or 0.0)
+            if latch and now < latch[1]:
+                if abs(measured - latch[0]) < 0.8:
+                    self._web_seek_latch = None
+                else:
+                    state = dict(state)
+                    state["t"] = latch[0]
+                    measured = latch[0]
+            elif latch:
+                self._web_seek_latch = None
+            # 事件优先: 网址/标签页/播放状态一变立刻广播; 进度按 0.5s 周期补发
+            changed = (url != self._web_url) or (tab != self._web_tab) \
+                or (playing != self._web_playing)
+            if url and (changed or (now - self._web_last_send) >= 0.5):
+                self._web_url = url
+                self._web_tab = tab
+                self._web_playing = playing
+                self._web_last_send = now
+                message = {
+                    "v": STREAM_VERSION, "type": "web_state",
+                    "url": url, "tab": tab,
+                    "pos": float(state.get("t") or 0.0),
+                    "playing": playing,
+                    "rate": float(state.get("r") or 1.0),
+                    "duration": float(state.get("d") or 0.0),
+                    "ok": bool(state.get("ok")),
+                    "ts": now,
+                }
+                if self._host_server is not None:
+                    self._host_server.broadcast(message)
+                # 标签页集合同步: 主持端所有打开的标签页(网址 + 顺序 + 当前页)
+                if state.get("ok"):
+                    note = "同步中 · %s · %s" % (
+                        "播放" if playing else "暂停",
+                        format_time(int(float(state.get("t") or 0.0) * 1000)),
+                    )
+                    if note != self._web_last_note:
+                        self._web_last_note = note
+                        self._set_status(note, "playing" if playing else "idle")
+        self._web_job = self.root.after(WEB_SYNC_INTERVAL_MS, self._web_tick)
+
+    def _web_client_apply(self, message):
+        """客户端: 按主持端状态对齐本地浏览器。"""
+        self._web_ensure_fields()
+        browser = self._web_browser
+        if browser is None:
+            return
+        url = str(message.get("url") or "")
+        self._web_tab = str(message.get("tab") or self._web_tab)
+        # 先把时长/进度记下来: 即使这一轮在导航, 进度条也能用
+        duration = float(message.get("duration") or 0.0)
+        position = float(message.get("pos") or 0.0)
+        if duration > 0:
+            self._web_duration = duration
+        self._web_pos = position
+        if url and _norm_url(url) != _norm_url(self._web_url):
+            self._web_url = url
+            self._web_ignore_local_until = time.monotonic() + 1.0
+            last = getattr(self, "_web_last_nav", None)
+            now = time.monotonic()
+            if last and last[0] == _norm_url(url) and now - last[1] < 3.0:
+                return
+            self._web_last_nav = (_norm_url(url), now)
+            try:
+                browser.navigate(url)
+            except Exception:
+                log.debug("同步导航失败", exc_info=True)
+            return
+        if not message.get("ok"):
+            return
+        rate = float(message.get("rate") or 1.0)
+        holding = time.monotonic() < getattr(self, "_web_hold_until", 0.0)
+        label = ("%.2f" % rate).rstrip("0").rstrip(".") + "x"
+        if (not holding) and getattr(self, "speed_var", None) is not None \
+                and self.speed_var.get() != label:
+            self.speed_var.set(label)
+        if duration > 0 and not getattr(self, "_web_dragging", False) and not holding:
+            self.progress_var.set(max(0.0, min(1000.0, position / duration * 1000.0)))
+            self.time_label.configure(text=format_time(int(position * 1000)))
+            self.duration_label.configure(text=format_time(int(duration * 1000)))
+        try:
+            state = browser.read_state()
+        except Exception:
+            return
+        if not state or not state.get("ok"):
+            return
+        target = float(message.get("pos") or 0.0)
+        playing = bool(message.get("playing"))
+        rate = float(message.get("rate") or 1.0)
+        if playing:
+            target += max(0.0, time.monotonic() - float(message.get("ts") or time.monotonic()))
+        actual = float(state.get("t") or 0.0)
+        need_seek = abs(actual - target) > WEB_SYNC_TOLERANCE_S
+        need_play = playing != bool(state.get("p"))
+        need_rate = abs(float(state.get("r") or 1.0) - rate) > 0.05
+        if need_seek or need_play or need_rate:
+            try:
+                browser.apply(target, playing, rate)
+            except Exception:
+                log.debug("同步应用失败", exc_info=True)
+
+    def _web_client_tabs(self, message):
+        """按主持端标签页 id 建立映射: 新的就开, 当前指向的切过去。"""
+        self._web_ensure_fields()
+        browser = self._web_browser
+        if browser is None:
+            return
+        tabs = message.get("tabs") or []
+        if not tabs:
+            return
+        active_id = str(message.get("active_id") or "")
+        alive = {t["id"]: t for t in browser.cached_tabs()}
+        # 新开的标签页要过一会儿才会出现在列表里, 不能立刻判死, 否则会重复开
+        now = time.monotonic()
+        for host_id in list(self._web_tab_map):
+            client_id = self._web_tab_map[host_id]
+            if client_id in alive:
+                continue
+            opened_at = self._web_tab_open_ts.get(host_id, 0.0)
+            if now - opened_at > 8.0:
+                self._web_tab_map.pop(host_id, None)
+                self._web_tab_open_ts.pop(host_id, None)
+        for tab in tabs:
+            host_id = str(tab.get("id") or "")
+            url = str(tab.get("url") or "")
+            if not host_id or not url:
+                continue
+            if self._web_tab_map.get(host_id):
+                # 已经开过(可能还没出现在列表里), 不要再开第二个
+                continue
+            new_id = browser.open_tab(url)
+            if new_id:
+                self._web_tab_map[host_id] = new_id
+                self._web_tab_open_ts[host_id] = time.monotonic()
+        client_active = self._web_tab_map.get(active_id)
+        if client_active:
+            self._web_ignore_local_until = time.monotonic() + 1.5
+            browser.select_tab(client_active)
+
+    def _web_pending(self, url):
+        norm = _norm_url(url)
+        stamp = self._web_open_pending.get(norm)
+        if stamp is None:
+            return False
+        if time.monotonic() - stamp > 6.0:
+            self._web_open_pending.pop(norm, None)
+            return False
+        return True
+
+    def _web_mark_pending(self, url):
+        self._web_open_pending[_norm_url(url)] = time.monotonic()
+
+    def _web_activate(self, active_url, active_index=0):
+        browser = self._web_browser
+        if browser is None:
+            return
+        try:
+            tabs = browser.cached_tabs()
+        except Exception:
+            return
+        if not tabs:
+            return
+        target = _norm_url(active_url)
+        for tab in tabs:
+            if _norm_url(tab.get("url")) == target:
+                browser.activate_tab(tab["id"])
+                return
+        if 0 <= active_index < len(tabs):
+            browser.activate_tab(tabs[active_index]["id"])
+
+    def _web_report_local_active(self, browser):
+        """双向同步: 客户端自己切了标签页, 也通知主持端切过去。"""
+        if time.monotonic() < self._web_ignore_local_until:
+            return
+        local = browser.attached_id
+        if not local or local == self._web_local_active:
+            return
+        self._web_local_active = local
+        reverse = {cid: hid for hid, cid in self._web_tab_map.items()}
+        host_id = reverse.get(local)
+        if not host_id:
+            return
+        self._client_send({"v": STREAM_VERSION, "type": "web_active", "tab": host_id})
+
+    def _web_apply_remote_active(self, tab_id):
+        """主持端: 应用房客切过来的标签页。"""
+        self._web_ensure_fields()
+        browser = self._web_browser
+        if browser is None or not tab_id:
+            return
+        browser.select_tab(str(tab_id))
+
+    def _web_report_local_url(self, browser):
+        """双向: 客户端自己换了页面, 也通知主持端跟着换。"""
+        if time.monotonic() < self._web_ignore_local_until:
+            return
+        try:
+            state = browser.read_state() or {}
+        except Exception:
+            return
+        url = str(state.get("url") or "")
+        if not url or _norm_url(url) == _norm_url(self._web_url):
+            return
+        # 起始页/浏览器内部页不上报, 否则会把本地文件路径推给主持端
+        if url.startswith(("about:", "edge:", "chrome:", "chrome-error:", "devtools:")):
+            return
+        if url.lower().startswith("file:") and "start.html" in url:
+            return
+        if not self._web_url:
+            # 还没跟主持同步过页面, 先不反向上报
+            return
+        self._web_url = url
+        self._client_send({"v": STREAM_VERSION, "type": "web_url", "url": url})
+
+    def _web_apply_remote_url(self, url):
+        """主持端: 房客换了页面, 跟着导航。"""
+        self._web_ensure_fields()
+        browser = self._web_browser
+        if browser is None or not url:
+            return
+        try:
+            browser.navigate(str(url))
+        except Exception:
+            log.debug("远端页面导航失败", exc_info=True)
+
+    def _web_remote_command(self, action, value):
+        """主持端: 应用来自房客的遥控指令(作用于主持自己的浏览器)。"""
+        self._web_ensure_fields()
+        browser = self._web_browser
+        if browser is None:
+            return
+        try:
+            state = browser.read_state() or {}
+            position = float(state.get("t") or 0.0)
+            playing = bool(state.get("p"))
+            rate = float(getattr(self, "_web_rate", 0.0) or state.get("r") or 1.0)
+            if action == "toggle":
+                playing = not playing
+            elif action == "play":
+                playing = True
+            elif action == "pause":
+                playing = False
+            elif action == "seek":
+                # 客户端发来的是毫秒, 浏览器 currentTime 用秒
+                position = max(0.0, float(value or 0.0) / 1000.0)
+            elif action == "seek_rel":
+                position = max(0.0, position + float(value or 0.0) / 1000.0)
+            elif action == "seek_ratio":
+                ratio = max(0.0, min(1.0, float(value or 0) / 1000.0))
+                total = float(state.get("d") or 0.0)
+                if total > 0:
+                    position = ratio * total
+            elif action == "rate":
+                rate = max(0.25, min(4.0, float(value or 1.0)))
+                self._web_rate = rate
+                position = float(getattr(self, "_web_pos", position) or position)
+            browser.apply(position, playing, rate)
+            self._web_seek_latch = (max(0.0, position), time.monotonic() + 3.0)
+            self._web_pos = max(0.0, position)
+            self._web_playing = bool(playing)
+            self._web_rate = rate
+            self._web_last_send = 0.0
+            if self._web_mode and self._hosting and self._host_server is not None:
+                payload = {
+                    "v": STREAM_VERSION, "type": "web_state",
+                    "url": self._web_url, "tab": self._web_tab,
+                    "pos": float(position), "playing": bool(playing),
+                    "rate": float(rate),
+                    "duration": float(getattr(self, "_web_duration", 0.0) or 0.0),
+                    "ok": True, "ts": time.monotonic(),
+                }
+                self._host_server.broadcast(payload)
+                log.info("远端遥控已应用并广播: %s %r", action, value)
+        except Exception:
+            log.debug("远程浏览器控制失败", exc_info=True)
+
+    def _web_client_browser_ready(self, ok):
+        if ok:
+            self._set_status("已加入浏览器同步房间 · 等待主持端操作", "ok")
+            # 客户端也要跑周期任务: 上报自己的网址变化、维持状态
+            self._web_schedule_tick()
+
+    def _web_refresh_start_page(self):
+        """语言切换后, 如果浏览器还停在本地起始页就重新生成并刷新。"""
+        browser = getattr(self, "_web_browser", None)
+        if browser is None:
+            return
+        try:
+            state = browser.read_state() or {}
+        except Exception:
+            return
+        url = str(state.get("url") or "")
+        if "start.html" not in url:
+            return
+        path = _write_start_page(self.settings.get("language", "zh"))
+        if not path:
+            return
+        try:
+            browser.navigate("file:///" + path.replace("\\", "/"))
+        except Exception:
+            log.debug("刷新起始页失败", exc_info=True)
+
+    def _web_prompt_url(self):
+        """app 模式没有地址栏, 用一个输入框代替。"""
+        from tkinter import simpledialog
+        browser = self._web_browser
+        if browser is None:
+            self._alert("浏览器未就绪", "请先开始浏览器同步。")
+            return
+        text = simpledialog.askstring("打开网址", "输入网址：", parent=self.root)
+        if not text or not text.strip():
+            return
+        text = text.strip()
+        if not text.startswith(("http://", "https://", "file://")):
+            text = "https://" + text
+        browser.navigate(text)
+        self._set_status("正在打开 · " + text, "playing")
+
+    def _web_shutdown(self):
+        self._web_ensure_fields()
+        self._web_token += 1
+        if self._web_job is not None:
+            try:
+                self.root.after_cancel(self._web_job)
+            except Exception:
+                pass
+            self._web_job = None
+        if self._web_browser is not None:
+            try:
+                self._web_browser.close()
+            except Exception:
+                log.debug("关闭内置浏览器失败", exc_info=True)
+            self._web_browser = None
+        profile = self._browser_profile
+        if profile:
+            try:
+                kill_profile_edges(profile)
+            except Exception:
+                log.debug("清理浏览器进程失败", exc_info=True)
+        release_browser_slot(self._browser_lock)
+        self._browser_profile = None
+        self._browser_lock = ""
+        self._browser_slot = 0
+        self._web_mode = False
+        self._web_url = ""
+        self._web_tab = ""
+        self._web_playing = False
+        self._web_last_send = 0.0
+        self._web_tabs_sig = ()
+        self._web_tabs_sent = 0.0
+        self._web_tabs_ready = False
+        self._web_open_pending = {}
+        self._web_tab_map = {}
+        self._web_last_note = ""
 
     # ------------------------------------------------------------ 流式传输
     def open_stream_menu(self):
@@ -5798,7 +7194,8 @@ class VideoPlayerApp:
         else:
             mode = "off"
             info = ""
-        dialog = StreamMenuDialog(self.root, mode, host_info=info, join_info=info)
+        dialog = StreamMenuDialog(self.root, mode, host_info=info, join_info=info,
+                                  web=getattr(self, "_web_mode", False))
         self._track_dialog(dialog)
         dialog.present()
         choice = dialog.choice
@@ -5825,6 +7222,17 @@ class VideoPlayerApp:
                 cmd_host, cmd_port, udp_host, udp_port = join_dialog.result
                 self._last_join_addrs = (cmd_host, cmd_port, udp_host, udp_port)
                 self.join_stream(cmd_host, cmd_port, udp_host, udp_port)
+        elif choice == "web":
+            host_dialog = HostStreamDialog(self.root, *self._last_host_ports)
+            self._track_dialog(host_dialog)
+            host_dialog.present()
+            if host_dialog.result is not None:
+                result = host_dialog.result
+                self._last_host_ports = (result[0], result[1])
+                password = result[2] if len(result) > 2 else ""
+                self.start_web_hosting(result[0], password)
+        elif choice == "open_url":
+            self._web_prompt_url()
         elif choice == "stop_host":
             self.stop_hosting()
         elif choice == "leave":
@@ -5887,7 +7295,11 @@ class VideoPlayerApp:
                         "error",
                     )
             elif kind == "client_message":
-                self._client_handle_message(event["message"])
+                # 单条消息处理出错也不能影响后续消息
+                try:
+                    self._client_handle_message(event["message"])
+                except Exception:
+                    log.exception("处理主持端消息失败")
             elif kind == "client_lost":
                 self._client_on_lost()
             elif kind == "client_reconnected":
@@ -5913,7 +7325,7 @@ class VideoPlayerApp:
             log.exception("处理网络事件失败: %s", kind)
 
     # ------------------------------------------------------------- 主持端
-    def start_hosting(self, cmd_port, udp_port, password=""):
+    def start_hosting(self, cmd_port, udp_port, password="", web=False):
         if self._hosting:
             return True
         if self._client_active:
@@ -5936,14 +7348,18 @@ class VideoPlayerApp:
                          name=f"host-serve-{cmd_port}").start()
         threading.Thread(target=self._host_monitor_loop, daemon=True,
                          name=f"host-monitor-{cmd_port}").start()
-        try:
-            self._stream_sender = UdpMediaSender(udp_port)
-            self._stream_sender.start()
-            log.info("媒体流监听 0.0.0.0:%d (客户端主动连入), VLC 本地中转 %d",
-                     self._stream_sender.port, self._stream_sender.relay_port)
-        except OSError as error:
-            self._stream_sender = None
-            log.warning("可靠流中转启动失败: %s", error)
+        if web:
+            # 浏览器同步不推流: 一个媒体端口都不占, 本机可以同时开主持和客户端
+            log.info("浏览器同步模式: 只开指令端口 %d, 不监听媒体端口", cmd_port)
+        else:
+            try:
+                self._stream_sender = UdpMediaSender(udp_port)
+                self._stream_sender.start()
+                log.info("媒体流监听 0.0.0.0:%d (客户端主动连入), VLC 本地中转 %d",
+                         self._stream_sender.port, self._stream_sender.relay_port)
+            except OSError as error:
+                self._stream_sender = None
+                log.warning("可靠流中转启动失败: %s", error)
         self.stream_button.set_active(True)
         self._refresh_stream_button_tooltip()
         self._sync_members_button()
@@ -5951,6 +7367,11 @@ class VideoPlayerApp:
         self._chat_last_sent = {}
         self.chat_panel._max_rows = self._chat_limit()
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         log.info("开始主持流式: TCP 指令端口 %d, 媒体端口 %d, 房间密码 %s",
@@ -5963,6 +7384,7 @@ class VideoPlayerApp:
         return True
 
     def stop_hosting(self):
+        self._web_shutdown()
         if not self._hosting:
             return
         self._hosting = False
@@ -6001,6 +7423,11 @@ class VideoPlayerApp:
         self._chat_messages = []
         self._chat_last_sent = {}
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         self._host_password = ""
@@ -6183,6 +7610,8 @@ class VideoPlayerApp:
             self._host_server.reply(client_id, {
                 "v": STREAM_VERSION, "type": "welcome", "client_id": client_id,
                 "host": self._host_name(),
+                "mode": "web" if getattr(self, "_web_mode", False) else "media",
+                "url": getattr(self, "_web_url", ""),
             })
             log.info("客户端接入: %s (流目标 %s)", name, stream or "无")
             self._broadcast_room()
@@ -6211,10 +7640,22 @@ class VideoPlayerApp:
         elif message_type == "cmd":
             self._apply_remote_command(client_id, message.get("action"),
                                        message.get("value"))
+        elif message_type == "web_cmd":
+            self._web_remote_command(message.get("action"), message.get("value"))
+        elif message_type == "web_url":
+            self._web_apply_remote_url(message.get("url"))
+        elif message_type == "web_ping":
+            self._host_server.reply(client_id, {
+                "v": STREAM_VERSION, "type": "web_pong",
+                "t1": message.get("t1"), "t2": time.monotonic(),
+            })
         else:
             log.debug("忽略未知消息类型: %s", message_type)
 
     def _apply_remote_command(self, client_id, action, value):
+        if getattr(self, "_web_mode", False):
+            self._web_remote_command(action, value)
+            return
         if self.player is None or self.current_path is None:
             self._host_server.reply(client_id, {
                 "v": STREAM_VERSION, "type": "error",
@@ -6383,6 +7824,10 @@ class VideoPlayerApp:
             log.info("本地跳转终止了残留推流链")
 
     def _seek_to_ms(self, target):
+        if self._client_active:
+            self._client_send_cmd("seek", int(target))
+            self.time_label.configure(text=format_time(int(target)))
+            return
         if self.player is None or self.current_path is None:
             return
         if self._hosting and self._stream_targets():
@@ -6605,6 +8050,11 @@ class VideoPlayerApp:
             self.chat_panel.add_message(message, mine=mine)
         except tk.TclError:
             pass
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.add_message(message, mine=mine)
+        except tk.TclError:
+            pass
 
     def _sync_chat_panel(self):
         try:
@@ -6614,6 +8064,10 @@ class VideoPlayerApp:
                     self.chat_panel.pack(side=tk.RIGHT, fill=tk.Y)
             else:
                 self.chat_panel.pack_forget()
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel._max_rows = self._chat_limit()
+            if not (self._hosting or self._client_active):
+                self._hide_fs_chat()
             self._schedule_danmaku_sync()
         except (tk.TclError, AttributeError):
             pass
@@ -6661,6 +8115,7 @@ class VideoPlayerApp:
             return
         if dialog not in self._secondary_windows:
             self._secondary_windows.append(dialog)
+        _walk_translate(dialog)
         try:
             dialog.bind("<Destroy>", lambda _e, d=dialog: self._forget_dialog(d),
                         add="+")
@@ -6868,6 +8323,11 @@ class VideoPlayerApp:
         self._chat_messages = []
         self.chat_panel._max_rows = self._chat_limit()
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         self.root.title(f"同步播放 — {APP_TITLE}")
@@ -6881,6 +8341,7 @@ class VideoPlayerApp:
                          name="client-connect").start()
 
     def leave_stream(self):
+        self._web_shutdown()
         if not self._client_active:
             return
         self._client_active = False
@@ -6918,6 +8379,11 @@ class VideoPlayerApp:
         self._sync_members_button()
         self._chat_messages = []
         self.chat_panel.clear()
+        try:
+            if self._fs_chat_panel is not None:
+                self._fs_chat_panel.clear()
+        except tk.TclError:
+            pass
         self._sync_chat_panel()
         self._sync_danmaku()
         self.root.title(APP_TITLE)
@@ -7036,6 +8502,14 @@ class VideoPlayerApp:
     def _dispose_player_async(self, player):
         """在后台线程回收旧播放器: libvlc 停止 UDP 输入偶尔会阻塞很久,
         放在 UI 线程里会直接把窗口卡死。"""
+        # 先立即静音 + 暂停, 避免后台 stop() 阻塞期间旧播放器继续出声,
+        # 换片/重连时出现"两份声音"。
+        try:
+            player.audio_set_mute(True)
+            player.set_pause(1)
+        except Exception:
+            log.debug("静音旧播放器失败", exc_info=True)
+
         def worker():
             try:
                 player.stop()
@@ -7050,12 +8524,17 @@ class VideoPlayerApp:
         threading.Thread(target=worker, daemon=True, name="vlc-dispose").start()
 
     def _create_player(self):
-        """新建一个播放器并绑定视频窗口(不复用可能卡在 stop 里的旧对象)。"""
+        """新建播放器(不复用可能卡在 stop 里的旧对象)。
+
+        这里不再提前绑定窗口句柄: VLC 在 play() 时可能重建 vout,
+        提前绑定会被丢弃并导致另开独立窗口。统一在起播后绑定。
+        """
         if self.instance is None:
             return None
         self.player = self.instance.media_player_new()
         self.player.set_rate(1.0)
-        self._attach_video_output()
+        # 新播放器尚未绑定句柄, 复位标记, 让换片流程重新绑一次
+        self._hwnd_attached = False
         return self.player
 
     def _show_buffering(self):
@@ -7136,6 +8615,9 @@ class VideoPlayerApp:
 
     def _start_client_video(self):
         """客户端用同一套 VLC 播放主持推来的 UDP 流, 画面直接渲染到视频区。"""
+        if getattr(self, "_web_mode", False):
+            # 浏览器同步模式只同步网页播放状态, 不接收媒体流
+            return
         if self.instance is None or self._client_udp_addr is None:
             return
         if self.player is None:
@@ -7170,6 +8652,7 @@ class VideoPlayerApp:
             self.player.audio_set_volume(self.volume_var.get())
             self.player.audio_set_mute(self.mute_var.get())
             self.player.play()
+            self.root.after(150, self._attach_video_output)
             self._client_video_started = True
             self._client_video_start_ts = time.monotonic()
             self._client_last_media_ms = -1
@@ -7179,6 +8662,7 @@ class VideoPlayerApp:
             self._schedule_danmaku_sync()
             self.watch_view.pack_forget()
             self._show_buffering()
+            self.root.after(900, self._update_track_button)
             log.info("客户端开始接收并渲染流: %s", url)
         except Exception:
             log.exception("客户端流渲染启动失败")
@@ -7278,7 +8762,29 @@ class VideoPlayerApp:
             if self._stream_receiver is not None:
                 self._stream_receiver.set_client_id(self._client_id)
             self._close_password_dialog()
+            if message.get("mode") == "web":
+                self._web_ensure_fields()
+                self._web_mode = True
+                self._web_tabs_ready = False
+                self._web_tabs_sig = ()
+                self._web_tab_map = {}
+                # 同步模式不需要媒体接收: 立刻释放占用的本地端口,
+                # 这样同一台机器可以同时跑主持和客户端两个实例
+                if self._stream_receiver is not None:
+                    try:
+                        self._stream_receiver.stop()
+                    except Exception:
+                        log.debug("释放媒体接收端口失败", exc_info=True)
+                    self._stream_receiver = None
+                self._set_status("已加入浏览器同步房间 · 正在打开浏览器…", "ok")
+                self._web_open_browser(str(message.get("url") or ""),
+                                       callback=self._web_client_browser_ready)
             log.info("主持已确认加入: client_id=%s", self._client_id)
+        elif message_type == "web_state":
+            if getattr(self, "_web_mode", False):
+                self._web_client_apply(message)
+        elif message_type == "web_pong":
+            pass
         elif message_type == "state":
             self._close_password_dialog()
             self._client_apply_state(message)
@@ -7303,6 +8809,12 @@ class VideoPlayerApp:
             self._trim_chat_history()
             self.chat_panel.set_messages(self._chat_messages,
                                          self._client_id or "")
+            try:
+                if self._fs_chat_panel is not None:
+                    self._fs_chat_panel.set_messages(self._chat_messages,
+                                                     self._client_id or "")
+            except tk.TclError:
+                pass
         elif message_type == "kicked":
             reason = str(message.get("reason") or "你已被主持移出房间")
             log.info("被主持移出房间: %s", reason)
@@ -7529,7 +9041,7 @@ class VideoPlayerApp:
             return
         try:
             args = ["--no-video-title-show", "--quiet",
-                    "--no-spu", "--no-sub-autodetect-file"]
+                    "--no-sub-autodetect-file"]
             mode = self.settings.get("decode_mode", "auto")
             if mode == "hardware":
                 args.append("--avcodec-hw=any")
@@ -7560,19 +9072,24 @@ class VideoPlayerApp:
             return
         self.root.update_idletasks()
         hwnd = self.video_frame.winfo_id()
-        try:
-            if os.name == "nt":
-                self.player.set_hwnd(hwnd)
-            elif sys.platform == "darwin":
-                self.player.set_nsobject(hwnd)
-            else:
-                self.player.set_xwindow(hwnd)
-            self._hwnd_attached = True
-            self._schedule_danmaku_sync()
-            log.info("视频输出已绑定窗口句柄 0x%X", hwnd)
-        except Exception as error:
-            log.exception("视频输出绑定失败(句柄 0x%X)", hwnd)
-            self._set_status(f"视频输出绑定失败: {error}", "error")
+        for attempt in range(2):
+            try:
+                if os.name == "nt":
+                    self.player.set_hwnd(hwnd)
+                elif sys.platform == "darwin":
+                    self.player.set_nsobject(hwnd)
+                else:
+                    self.player.set_xwindow(hwnd)
+                self._hwnd_attached = True
+                self._schedule_danmaku_sync()
+                log.info("视频输出已绑定窗口句柄 0x%X", hwnd)
+                return
+            except Exception as error:
+                log.exception("视频输出绑定失败(句柄 0x%X, 第 %d 次)", hwnd, attempt + 1)
+                if attempt == 0:
+                    time.sleep(0.08)
+                    continue
+                self._set_status(f"视频输出绑定失败: {error}", "error")
 
     def _enable_drag_and_drop(self):
         if TkinterDnD is None or DND_FILES is None:
@@ -7691,6 +9208,7 @@ class VideoPlayerApp:
         global ANIMATIONS_ENABLED
         self.settings = settings
         save_settings(settings)
+        self.apply_language(settings.get("language", "zh"))
         if hasattr(self, "buffering"):
             try:
                 self.buffering.set_user_scale(settings.get("buffer_scale", 1.0))
@@ -7701,9 +9219,16 @@ class VideoPlayerApp:
         ANIMATIONS_ENABLED = bool(settings.get("animations", True))
         self._trim_chat_history()
         self.chat_panel._max_rows = self._chat_limit()
+        if self._fs_chat_panel is not None:
+            self._fs_chat_panel._max_rows = self._chat_limit()
         if self._hosting:
             try:
                 self.chat_panel.set_messages(self._chat_messages, "host")
+            except tk.TclError:
+                pass
+            try:
+                if self._fs_chat_panel is not None:
+                    self._fs_chat_panel.set_messages(self._chat_messages, "host")
             except tk.TclError:
                 pass
         if self.danmaku is not None:
@@ -7757,12 +9282,9 @@ class VideoPlayerApp:
             file_size = 0
         log.info("载入媒体: %s (%s)", path, format_size(file_size) or "大小未知")
 
-        # 换片时重建播放器: 避免上一条媒体的字幕轨/ES 选择残留,
-        # 否则 VLC 可能把上一部 MKV 的内嵌字幕带到新视频上。
-        if self.current_path is not None:
-            previous = self.player
-            self.player = None
-            self._dispose_player_async(previous)
+        # 换片复用同一个播放器实例: 反复新建 media_player 会让 VLC 的 vout
+        # 偶发脱离已绑定的句柄, 表现为"隔一次就弹独立窗口"。
+        if self.player is None:
             self._create_player()
             if self.player is None:
                 return
@@ -7781,6 +9303,8 @@ class VideoPlayerApp:
         if not self._hwnd_attached:
             self._attach_video_output()
         self.player.set_media(media)
+        # 换片会重建播放器, 新播放器必须重新绑定窗口句柄, 否则 VLC 会另开独立输出窗口
+        self._attach_video_output()
 
         self.current_path = path
         self._schedule_danmaku_sync()
@@ -7801,6 +9325,13 @@ class VideoPlayerApp:
         self._session_files += 1
         self.player.play()
         self.player.set_rate(self._current_rate())
+        # play() 之后 VLC 会重建内部视频输出, 再绑几次句柄, 避免它另开独立窗口
+        for delay in (150, 450, 900):
+            self.root.after(delay, self._attach_video_output)
+        # VLC 起播后音轨表可能还没就绪, 多试几次直到固定到第一条
+        for delay in (700, 1500, 2500):
+            self.root.after(delay, self._ensure_single_audio_track)
+        self.root.after(900, self._update_track_button)
         if not self.settings.get("autoplay", True):
             self.player.pause()
             log.info("设置: 打开文件后不自动播放")
@@ -7963,6 +9494,7 @@ class VideoPlayerApp:
         rate = self._current_rate()
         if self._client_active:
             self._client_send_cmd("rate", rate)
+            self._web_hold_until = time.monotonic() + 2.0
             self._set_status(f"已请求播放速度 {rate:g}x")
             return
         if self.player is None:
@@ -7981,8 +9513,17 @@ class VideoPlayerApp:
 
     def _on_seek_start(self):
         self._seeking = True
+        if getattr(self, "_web_mode", False):
+            self._web_dragging = True
 
     def _on_progress_drag(self, value):
+        if getattr(self, "_web_mode", False):
+            duration = getattr(self, "_web_duration", 0.0)
+            if duration <= 0:
+                return
+            self.time_label.configure(
+                text=format_time(int(float(value) / 1000.0 * duration * 1000)))
+            return
         if self._client_active:
             state = self._client_state
             if not state or not state.get("duration"):
@@ -7996,6 +9537,30 @@ class VideoPlayerApp:
         self.time_label.configure(text=format_time(target))
 
     def _on_seek_end(self, value):
+        if getattr(self, "_web_mode", False):
+            self._web_dragging = False
+            self._web_rate = 0.0
+            self._web_hold_until = 0.0
+            self._seeking = False
+            duration = getattr(self, "_web_duration", 0.0)
+            if duration <= 0:
+                if self._client_active:
+                    self._client_send_cmd("seek_ratio", int(float(value)))
+                    self._web_hold_until = time.monotonic() + 3.0
+                    self.progress_var.set(float(value))
+                    self._set_status("已请求跳转 · 等待主持端确认")
+                self._seeking = False
+                return
+            target = int(float(value) / 1000.0 * duration * 1000)
+            self.time_label.configure(text=format_time(target))
+            if self._client_active:
+                self._client_send_cmd("seek", target)
+                # 乐观显示: 2 秒内不让回传的旧进度把滑块打回去
+                self._web_hold_until = time.monotonic() + 2.0
+                self.progress_var.set(float(value))
+            else:
+                self._web_remote_command("seek", target)
+            return
         if self._client_active:
             state = self._client_state
             if state and state.get("duration"):
@@ -8052,6 +9617,13 @@ class VideoPlayerApp:
             except tk.TclError:
                 pass
         self._fs_dock_visible = False
+        if self._fs_chat is not None:
+            try:
+                self._fs_chat.withdraw()
+            except tk.TclError:
+                pass
+        self._fs_chat_visible = False
+        self._fs_chat_rect = None
         self._start_fs_watch()
         self.root.after(60, lambda: apply_dark_titlebar(self.root))
         log.info("进入全屏 (恢复尺寸 %s)", self._saved_geometry)
@@ -8067,6 +9639,13 @@ class VideoPlayerApp:
             except tk.TclError:
                 pass
         self._fs_dock_visible = False
+        if self._fs_chat is not None:
+            try:
+                self._fs_chat.withdraw()
+            except tk.TclError:
+                pass
+        self._fs_chat_visible = False
+        self._fs_chat_rect = None
         self.root.attributes("-fullscreen", False)
         if self._saved_geometry:
             self.root.geometry(self._saved_geometry)
@@ -8089,6 +9668,10 @@ class VideoPlayerApp:
             if self._client_active:
                 self._client_retry_reconnect()
             self._refresh_state()
+            now = time.monotonic()
+            if now - getattr(self, "_last_track_check", 0.0) >= 1.0:
+                self._last_track_check = now
+                self._update_track_button()
         finally:
             self._schedule_tick()
 
@@ -8143,6 +9726,157 @@ class VideoPlayerApp:
                 self._last_state_push = now
                 self._broadcast_state()
 
+    def _ensure_single_audio_track(self):
+        """多音轨媒体只保留第一条音轨, 避免出现两条音轨叠着响。"""
+        if self.player is None or self._client_active:
+            return
+        try:
+            count = self.player.audio_get_track_count()
+        except Exception:
+            return
+        if count <= 1:
+            return
+        try:
+            desc = self.player.audio_get_track_description() or []
+            tracks = [entry for entry in desc if entry and entry[0] > 0]
+            if not tracks:
+                return
+            current = self.player.audio_get_track()
+            if current != tracks[0][0]:
+                self.player.audio_set_track(tracks[0][0])
+                log.info("多音轨媒体: 已固定第一条音轨 %s", tracks[0][1])
+        except Exception:
+            log.debug("选择音轨失败", exc_info=True)
+
+    def _track_display_name(self, name):
+        if isinstance(name, bytes):
+            name = name.decode("utf-8", "ignore")
+        name = str(name or "").strip()
+        return name or "默认"
+
+    def _audio_track_entries(self):
+        if self.player is None:
+            return []
+        try:
+            desc = self.player.audio_get_track_description() or []
+        except Exception:
+            return []
+        entries = []
+        for tid, name in desc:
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue
+            if tid > 0:
+                entries.append((tid, self._track_display_name(name)))
+        return entries
+
+    def _subtitle_entries(self):
+        if self.player is None:
+            return []
+        try:
+            desc = self.player.video_get_spu_description() or []
+        except Exception:
+            return []
+        entries = []
+        for tid, name in desc:
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue
+            if tid > 0:
+                entries.append((tid, self._track_display_name(name)))
+        return entries
+
+    def _update_track_button(self):
+        if self.player is None or (self.current_path is None and not self._client_active):
+            self._hide_track_button()
+            return
+        show = len(self._audio_track_entries()) > 1 or len(self._subtitle_entries()) > 0
+        try:
+            mapped = bool(self.track_button.winfo_ismapped())
+        except tk.TclError:
+            mapped = False
+        if show and not mapped:
+            try:
+                self.track_button.pack(side=tk.LEFT, padx=(10, 0),
+                                       before=self.back_button)
+            except tk.TclError:
+                pass
+        elif not show and mapped:
+            self.track_button.pack_forget()
+
+    def _hide_track_button(self):
+        try:
+            if self.track_button.winfo_ismapped():
+                self.track_button.pack_forget()
+        except tk.TclError:
+            pass
+
+    def open_track_menu(self):
+        if self.player is None or (self.current_path is None and not self._client_active):
+            return
+        audio = self._audio_track_entries()
+        subs = self._subtitle_entries()
+        if not audio and not subs:
+            return
+        menu = tk.Menu(self.root, tearoff=0, bg=C.SURFACE, fg=C.TEXT,
+                       activebackground=C.ACCENT, activeforeground="#0B0F1A",
+                       relief=tk.FLAT, bd=0, font=ui_font(10))
+        try:
+            if audio:
+                menu.add_command(label="音频", state=tk.DISABLED)
+                try:
+                    current = int(self.player.audio_get_track())
+                except Exception:
+                    current = -1
+                for tid, name in audio:
+                    mark = "✓ " if tid == current else "   "
+                    menu.add_command(label=mark + name,
+                                     command=lambda t=tid: self._set_audio_track(t))
+            if subs:
+                if audio:
+                    menu.add_separator()
+                menu.add_command(label="字幕", state=tk.DISABLED)
+                try:
+                    current = int(self.player.video_get_spu())
+                except Exception:
+                    current = -1
+                mark = "✓ " if current < 0 else "   "
+                menu.add_command(label=mark + "关闭字幕",
+                                 command=lambda: self._set_subtitle(-1))
+                for tid, name in subs:
+                    mark = "✓ " if tid == current else "   "
+                    menu.add_command(label=mark + name,
+                                     command=lambda t=tid: self._set_subtitle(t))
+            x = self.track_button.winfo_rootx()
+            y = self.track_button.winfo_rooty() + self.track_button.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except tk.TclError:
+                pass
+            self.root.after(50, menu.destroy)
+
+    def _set_audio_track(self, tid):
+        try:
+            self.player.audio_set_track(int(tid))
+            log.info("切换音轨: %s", tid)
+            self._set_status("已切换音轨", "ok")
+        except Exception:
+            log.exception("切换音轨失败")
+        self._update_track_button()
+
+    def _set_subtitle(self, tid):
+        try:
+            self.player.video_set_spu(int(tid))
+            log.info("切换字幕: %s", tid)
+            self._set_status("已关闭字幕" if int(tid) < 0 else "已切换字幕", "ok")
+        except Exception:
+            log.exception("切换字幕失败")
+        self._update_track_button()
+
     def _log_media_details(self):
         width = height = 0
         try:
@@ -8160,6 +9894,7 @@ class VideoPlayerApp:
         )
 
     def _set_status(self, text, level="idle"):
+        text = tr(text)
         colors = {"idle": C.TEXT_DIM, "playing": C.ACCENT, "error": C.DANGER, "ok": C.OK}
         self.status_label.configure(text=text)
         self.status_dot.delete("all")
@@ -8168,14 +9903,36 @@ class VideoPlayerApp:
                                      anchor="nw", image=dot)
 
     def _alert(self, title, message, kind="info"):
+        title = tr(title)
+        message = tr(message)
         log.debug("提示框[%s]: %s | %s", kind, title, message.replace("\n", " / "))
         self._alert_open = True
         self._sync_danmaku()
         try:
-            Alert(self.root, title, message, kind)
+            alert = Alert(self.root, title, message, kind)
+            _walk_translate(alert)
         finally:
             self._alert_open = False
             self._schedule_danmaku_sync()
+
+    def apply_language(self, lang):
+        """切换界面语言并立即刷新全部窗口。"""
+        self.settings["language"] = "en" if str(lang).lower() == "en" else "zh"
+        apply_language(self.root, self.settings["language"])
+        self._web_refresh_start_page()
+        for dialog in list(self._secondary_windows):
+            try:
+                if dialog.winfo_exists():
+                    _walk_translate(dialog)
+            except tk.TclError:
+                pass
+        for attr in ("_fs_chat", "_fs_dock"):
+            dialog = getattr(self, attr, None)
+            if dialog is not None:
+                try:
+                    _walk_translate(dialog)
+                except tk.TclError:
+                    pass
 
     # --------------------------------------------------------------- close
     def _exit_watchdog(self):
@@ -8192,6 +9949,10 @@ class VideoPlayerApp:
         if self._closing:
             return
         self._closing = True
+        try:
+            self._web_shutdown()
+        except Exception:
+            log.debug("关闭浏览器失败", exc_info=True)
         log.info("关闭播放器")
         threading.Thread(target=self._exit_watchdog, daemon=True).start()
 
@@ -8278,6 +10039,1027 @@ def create_root():
         except Exception:
             log.warning("TkinterDnD 初始化失败, 回退到普通 Tk", exc_info=True)
     return tk.Tk()
+
+
+# ---------------------------------------------------------------------------
+# 浏览器同步模式
+#
+#   * 不推流、不转发画面/音频; 只同步 "打开哪个网址 + 播到第几秒 + 是否在播";
+#   * 所有同步指令复用现有 TCP 指令端口: web_state / web_ping / web_pong / web_cmd;
+#   * 浏览器窗口由应用拉起(系统 Edge 的 app 模式 + 独立配置目录),
+#     通过 CDP 读取/写入页面里 <video> 的状态;
+#   * 只面向普通 HTML5 内容, 不处理 DRM。
+# ---------------------------------------------------------------------------
+
+BROWSER_START_URL = "https://www.bing.com"
+BROWSER_WINDOW_TITLE = "Nobplaypot 浏览器"
+BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser-profile")
+BROWSER_PROFILE_ROOT = os.path.join(CONFIG_DIR, "browser-profiles")
+WEB_SYNC_INTERVAL_MS = 200
+WEB_SYNC_TOLERANCE_S = 0.75
+
+_WEB_STATE_JS = r"""
+(function () {
+  var v = document.querySelector('video');
+  if (!v) { return JSON.stringify({ok: false, url: location.href}); }
+  return JSON.stringify({
+    ok: true, url: location.href,
+    t: v.currentTime || 0,
+    d: isFinite(v.duration) ? v.duration : 0,
+    p: (!v.paused && !v.ended),
+    r: v.playbackRate || 1
+  });
+})()
+"""
+
+
+def _web_apply_js(position, playing, rate):
+    action = "v.play().catch(function(){});" if playing else "v.pause();"
+    return (
+        "(function(){var v=document.querySelector('video');"
+        "if(!v){return 'no-video';}"
+        "try{v.currentTime=" + repr(float(position)) + ";}catch(e){}"
+        "try{v.playbackRate=" + repr(float(rate)) + ";}catch(e){}"
+        + action +
+        "return 'ok';})()"
+    )
+
+
+def _free_tcp_port(start, end):
+    for port in range(start, end + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("没有可用的本地调试端口")
+
+
+def _norm_url(url):
+    """用于标签页匹配的 URL 归一化: 去掉锚点与尾部斜杠。"""
+    text = str(url or "").split("#", 1)[0].strip()
+    if text.endswith("/"):
+        text = text.rstrip("/")
+    return text
+
+
+def _pid_alive(pid):
+    if not pid or pid <= 0:
+        return False
+    try:
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    except Exception:
+        return False
+
+
+_SLOTS_HELD = set()
+
+
+def acquire_browser_slot(slots=4):
+    """给当前进程分配一个独占的浏览器 profile 槽位, 本机多开时互不干扰。"""
+    os.makedirs(BROWSER_PROFILE_ROOT, exist_ok=True)
+    pid = os.getpid()
+    for index in range(1, slots + 1):
+        # 同进程内复用一个槽位会导致两个浏览器共用 profile, 必须跳过
+        if index in _SLOTS_HELD:
+            continue
+        lock_path = os.path.join(BROWSER_PROFILE_ROOT, "slot-%d.lock" % index)
+        if os.path.exists(lock_path):
+            old_pid = 0
+            try:
+                with open(lock_path, encoding="utf-8") as handle:
+                    old_pid = int((handle.read() or "0").strip() or 0)
+            except (OSError, ValueError):
+                old_pid = 0
+            if old_pid and old_pid != pid and _pid_alive(old_pid):
+                continue
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+        try:
+            handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            continue
+        except OSError:
+            continue
+        try:
+            os.write(handle, str(pid).encode("ascii"))
+        finally:
+            os.close(handle)
+        _SLOTS_HELD.add(index)
+        return index, os.path.join(BROWSER_PROFILE_ROOT, "slot-%d" % index), lock_path
+    # 全部占满: 用进程号单独开一个目录, 也不再和别人共用
+    fallback = os.path.join(BROWSER_PROFILE_ROOT, "slot-p%d" % pid)
+    os.makedirs(fallback, exist_ok=True)
+    return 0, fallback, ""
+
+
+def release_browser_slot(lock_path):
+    try:
+        name = os.path.basename(str(lock_path or ""))
+        if name.startswith("slot-") and name.endswith(".lock"):
+            _SLOTS_HELD.discard(int(name[5:-5]))
+    except (ValueError, TypeError):
+        pass
+    if not lock_path:
+        return
+    try:
+        os.remove(lock_path)
+    except OSError:
+        pass
+
+
+def kill_profile_edges(profile_dir):
+    """只杀使用指定 profile 目录的 Edge 进程, 不影响其它实例。"""
+    if not profile_dir:
+        return
+    target = os.path.abspath(profile_dir)
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | "
+        "Where-Object { $_.CommandLine -and $_.CommandLine.Contains('%s') } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        % target.replace("'", "''")
+    )
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                       capture_output=True, timeout=20)
+    except Exception:
+        log.debug("清理浏览器实例失败", exc_info=True)
+
+
+class _MiniWebSocket:
+    """只够 CDP 用的 WebSocket 客户端: 文本帧 + ping/pong + close。"""
+
+    def __init__(self, sock):
+        self._sock = sock
+        self._buf = b""
+
+    @classmethod
+    def connect(cls, url, timeout=8.0):
+        parts = urllib.parse.urlparse(url)
+        host = parts.hostname
+        port = parts.port or (443 if parts.scheme == "wss" else 80)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        sock = socket.create_connection((host, port), timeout=timeout)
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        request = (
+            "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n" % (path, host, port, key)
+        )
+        sock.sendall(request.encode("ascii"))
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise OSError("CDP 握手失败")
+            head += chunk
+        head, rest = head.split(b"\r\n\r\n", 1)
+        status_line = head.split(b"\r\n", 1)[0].decode("latin1")
+        if "101" not in status_line:
+            raise OSError("CDP 握手被拒绝: %s" % status_line)
+        client = cls(sock)
+        client._buf = rest
+        return client
+
+    def _send_frame(self, opcode, payload):
+        header = bytearray([0x80 | opcode])
+        length = len(payload)
+        if length < 126:
+            header.append(0x80 | length)
+        elif length < 65536:
+            header.append(0x80 | 126)
+            header += struct.pack("!H", length)
+        else:
+            header.append(0x80 | 127)
+            header += struct.pack("!Q", length)
+        mask = os.urandom(4)
+        header += mask
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        self._sock.sendall(bytes(header) + masked)
+
+    def send_text(self, text):
+        self._send_frame(1, text.encode("utf-8"))
+
+    def _read(self, count):
+        while len(self._buf) < count:
+            chunk = self._sock.recv(65536)
+            if not chunk:
+                raise OSError("CDP 连接已关闭")
+            self._buf += chunk
+        out, self._buf = self._buf[:count], self._buf[count:]
+        return out
+
+    def recv_text(self, timeout=10.0):
+        self._sock.settimeout(timeout)
+        while True:
+            first, second = self._read(2)
+            opcode = first & 0x0F
+            masked = bool(second & 0x80)
+            length = second & 0x7F
+            if length == 126:
+                length = struct.unpack("!H", self._read(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", self._read(8))[0]
+            mask = self._read(4) if masked else None
+            payload = self._read(length)
+            if mask:
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            if opcode == 1:
+                return payload.decode("utf-8", "replace")
+            if opcode == 8:
+                raise OSError("CDP 连接被关闭")
+            if opcode == 9:
+                self._send_frame(10, payload)
+
+
+class _LegacyEdgeShell:
+    """(旧实现, 保留备查) 应用内浏览器窗口: 系统 Edge 的 app 模式 + CDP 控制页面。"""
+
+    def __init__(self):
+        self.proc = None
+        self.port = None
+        self.ws = None
+        self._id = 0
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def edge_path():
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+            os.path.expandvars(r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe"),
+        ]
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        return None
+
+    def available(self):
+        return self.edge_path() is not None
+
+    def open(self, url=""):
+        if self.proc is not None:
+            return True
+        edge = self.edge_path()
+        if edge is None:
+            raise RuntimeError("未找到 Microsoft Edge, 无法打开内置浏览器")
+        os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+        self.port = _free_tcp_port(9300, 9399)
+        args = [
+            edge,
+            "--remote-debugging-port=%d" % self.port,
+            "--user-data-dir=%s" % BROWSER_PROFILE_DIR,
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--app=%s" % (url or BROWSER_START_URL),
+        ]
+        self.proc = subprocess.Popen(
+            args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if not self._connect(20.0):
+            return False
+        if url:
+            # 首次启动可能先落到新标签页, 连上后显式导航到目标地址
+            self.navigate(url)
+        return True
+
+    def _targets(self):
+        url = "http://127.0.0.1:%d/json" % self.port
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _connect(self, deadline):
+        end = time.monotonic() + deadline
+        last_error = None
+        while time.monotonic() < end:
+            try:
+                for target in self._targets():
+                    if target.get("type") != "page":
+                        continue
+                    ws_url = target.get("webSocketDebuggerUrl")
+                    if not ws_url:
+                        continue
+                    self.ws = _MiniWebSocket.connect(ws_url)
+                    return True
+            except Exception as error:
+                last_error = error
+            time.sleep(0.35)
+        raise RuntimeError("浏览器调试端口连接失败: %s" % last_error)
+
+    def evaluate(self, expression, timeout=6.0):
+        with self._lock:
+            if self.ws is None:
+                raise RuntimeError("浏览器未就绪")
+            self._id += 1
+            command_id = self._id
+            self.ws.send_text(json.dumps({
+                "id": command_id,
+                "method": "Runtime.evaluate",
+                "params": {"expression": expression, "returnByValue": True,
+                           "awaitPromise": False},
+            }))
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                raw = self.ws.recv_text(timeout=max(0.5, deadline - time.monotonic()))
+                try:
+                    payload = json.loads(raw)
+                except ValueError:
+                    continue
+                if payload.get("id") != command_id:
+                    continue
+                result = payload.get("result") or {}
+                remote = result.get("result") or {}
+                return remote.get("value")
+            raise TimeoutError("CDP 调用超时")
+
+    def navigate(self, url, timeout=8.0):
+        with self._lock:
+            if self.ws is None:
+                return False
+            self._id += 1
+            self.ws.send_text(json.dumps({
+                "id": self._id, "method": "Page.navigate", "params": {"url": url},
+            }))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(0.15)
+            try:
+                ready = self.evaluate("document.readyState", timeout=2.0)
+            except Exception:
+                continue
+            if ready == "complete":
+                time.sleep(0.2)
+                return True
+        return False
+
+    def read_state(self):
+        raw = self.evaluate(_WEB_STATE_JS)
+        if not isinstance(raw, str):
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+
+    def apply(self, position, playing, rate=1.0):
+        return self.evaluate(_web_apply_js(position, playing, rate))
+
+    def close(self):
+        try:
+            if self.ws is not None:
+                self.ws.send_text(json.dumps({"id": 0, "method": "Browser.close"}))
+        except Exception:
+            pass
+        try:
+            if self.proc is not None:
+                self.proc.terminate()
+        except Exception:
+            pass
+        self.ws = None
+        self.proc = None
+
+
+_START_PAGE_STRINGS = {
+    "zh": {
+        "LANG": "zh-CN", "TITLE": "Nobplaypot 浏览器",
+        "SUB": "一起看，同步播放 · 局域网同步模式",
+        "PH": "搜索网页，或粘贴视频链接…", "SEARCH": "搜索",
+        "SITE": "项目官网", "REPO": "GitHub 仓库",
+        "Q1": "哔哩哔哩", "Q2": "YouTube", "Q3": "腾讯视频", "Q4": "爱奇艺",
+        "TIPS": '["搜索网页，或粘贴视频链接…","试试：编程教学","试试：4K 纪录片","试试：B 站视频"]',
+        "FOOT": "Nobplaypot %s · 浏览器同步模式（预览）",
+    },
+    "en": {
+        "LANG": "en", "TITLE": "Nobplaypot Browser",
+        "SUB": "Watch together, perfectly in sync · LAN sync mode",
+        "PH": "Search the web, or paste a video link…", "SEARCH": "Search",
+        "SITE": "Website", "REPO": "GitHub repo",
+        "Q1": "Bilibili", "Q2": "YouTube", "Q3": "Tencent Video", "Q4": "iQIYI",
+        "TIPS": '["Search the web, or paste a video link…","Try: coding tutorial","Try: 4K documentary","Try: a Bilibili video"]',
+        "FOOT": "Nobplaypot %s · Browser Sync (preview)",
+    },
+}
+
+_START_PAGE_HTML = '<!doctype html>\n<html lang="__LANG__"><head><meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>__TITLE__</title>\n<style>\n:root{--bg:#05070d;--fg:#e8eefc;--mut:#8ea0bd;--acc:#5b8cff;--acc2:#7b5bff;--card:rgba(18,25,38,.62)}\n*{box-sizing:border-box}\nhtml,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden;\nfont-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif}\n#fx{position:fixed;inset:0;z-index:0;display:block}\n.grid{position:fixed;inset:0;z-index:0;opacity:.22;pointer-events:none;\nbackground-image:linear-gradient(rgba(140,170,255,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(140,170,255,.09) 1px,transparent 1px);\nbackground-size:64px 64px;mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 76%)}\n.vignette{position:fixed;inset:0;z-index:1;pointer-events:none;\nbackground:radial-gradient(circle at 50% 38%,transparent 30%,rgba(0,0,0,.55) 100%)}\nmain{position:relative;z-index:3;height:100%;display:flex;flex-direction:column;align-items:center;\njustify-content:center;gap:22px;padding:32px}\n.logo{display:flex;align-items:center;gap:14px;animation:rise .8s cubic-bezier(.2,.8,.2,1) both}\n.mark{width:54px;height:54px;border-radius:16px;position:relative;overflow:hidden;\nbackground:linear-gradient(140deg,var(--acc),var(--acc2));display:grid;place-items:center;\nfont-weight:800;font-size:22px;color:#080c15;box-shadow:0 14px 40px rgba(91,140,255,.45);\nanimation:pulse 3.6s ease-in-out infinite}\n.mark:after{content:"";position:absolute;inset:-40%;background:conic-gradient(from 0deg,transparent,rgba(255,255,255,.65),transparent 40%);\nanimation:spin 4.5s linear infinite}\n@keyframes spin{to{transform:rotate(360deg)}}\n@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}\nh1{font-size:31px;margin:0;letter-spacing:.6px}\n.sub{color:var(--mut);font-size:14px;margin:5px 0 0;letter-spacing:.3px}\n@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}\n.card{width:min(680px,92vw);background:var(--card);border:1px solid rgba(140,170,255,.2);\nborder-radius:18px;padding:20px;backdrop-filter:blur(16px);position:relative;overflow:hidden;\nbox-shadow:0 26px 70px rgba(0,0,0,.5);animation:rise .9s .08s cubic-bezier(.2,.8,.2,1) both}\n.card:before{content:"";position:absolute;inset:0;border-radius:18px;padding:1px;pointer-events:none;\nbackground:linear-gradient(120deg,transparent 20%,rgba(120,160,255,.55),transparent 60%) border-box;\n-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);\n-webkit-mask-composite:xor;mask-composite:exclude;animation:sheen 6s linear infinite}\n@keyframes sheen{0%{background-position:-200% 0}100%{background-position:200% 0}}\nform{display:flex;gap:10px}\ninput{flex:1;padding:15px 16px;font-size:16px;border-radius:12px;border:1px solid #2a3550;\nbackground:rgba(8,12,20,.82);color:var(--fg);outline:none;transition:border-color .2s,box-shadow .2s}\ninput:focus{border-color:var(--acc);box-shadow:0 0 0 4px rgba(91,140,255,.18)}\nbutton.primary{padding:0 24px;font-size:15px;border:0;border-radius:12px;cursor:pointer;font-weight:700;\nbackground:linear-gradient(135deg,var(--acc),var(--acc2));color:#080c15;position:relative;overflow:hidden;\ntransition:transform .15s,filter .2s}\nbutton.primary:hover{transform:translateY(-1px);filter:brightness(1.1)}\n.links{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}\na.chip{flex:1;min-width:150px;text-align:center;padding:12px 14px;border-radius:12px;text-decoration:none;\ncolor:var(--fg);border:1px solid rgba(140,170,255,.24);background:rgba(12,18,30,.72);font-size:14px;\ntransition:transform .18s,border-color .18s,background .18s,box-shadow .18s}\na.chip:hover{transform:translateY(-2px);border-color:var(--acc);background:rgba(28,42,70,.92);\nbox-shadow:0 10px 28px rgba(91,140,255,.28)}\n.quick{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;animation:rise 1s .16s both}\na.site{padding:8px 14px;border-radius:999px;text-decoration:none;color:var(--mut);font-size:13px;\nborder:1px solid rgba(140,170,255,.16);transition:color .18s,border-color .18s,transform .18s}\na.site:hover{color:var(--fg);border-color:var(--acc);transform:translateY(-2px)}\nfooter{position:fixed;bottom:14px;width:100%;text-align:center;color:#4f5f7a;font-size:12px;z-index:3}\n@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}\n</style></head>\n<body>\n<canvas id="fx"></canvas>\n<div class="grid"></div>\n<div class="vignette"></div>\n<main>\n  <div class="logo"><div class="mark">N</div>\n    <div><h1>Nobplaypot</h1><p class="sub">__SUB__</p></div>\n  </div>\n  <div class="card">\n    <form action="https://www.bing.com/search" method="get" target="_self">\n      <input id="q" type="text" name="q" placeholder="__PH__" autofocus autocomplete="off">\n      <button class="primary" type="submit">__SEARCH__</button>\n    </form>\n    <div class="links">\n      <a class="chip" href="https://nobri6039.github.io/Nobplaypot/" target="_blank">__SITE__</a>\n      <a class="chip" href="https://github.com/nobri6039/Nobplaypot" target="_blank">__REPO__</a>\n    </div>\n  </div>\n  <div class="quick">\n    <a class="site" href="https://www.bilibili.com" target="_self">__Q1__</a>\n    <a class="site" href="https://www.youtube.com" target="_self">__Q2__</a>\n    <a class="site" href="https://v.qq.com" target="_self">__Q3__</a>\n    <a class="site" href="https://www.iqiyi.com" target="_self">__Q4__</a>\n  </div>\n</main>\n<footer>__FOOT__</footer>\n<script>\n(function(){\n  var cv=document.getElementById(\'fx\'), ctx=cv.getContext(\'2d\');\n  var W=0,H=0,DPR=1,parts=[],stars=[],shoot=[],t=0;\n  var mouse={x:-9999,y:-9999};\n  function resize(){\n    DPR=Math.min(window.devicePixelRatio||1,2);\n    W=cv.width=Math.floor(innerWidth*DPR); H=cv.height=Math.floor(innerHeight*DPR);\n    cv.style.width=innerWidth+\'px\'; cv.style.height=innerHeight+\'px\';\n    var n=Math.round(Math.min(170,Math.max(60,innerWidth/11)));\n    parts=[];\n    for(var i=0;i<n;i++){\n      parts.push({x:Math.random()*W,y:Math.random()*H,\n        vx:(Math.random()-.5)*.34*DPR,vy:(Math.random()-.5)*.34*DPR,\n        r:(Math.random()*1.6+.6)*DPR, hue:Math.random()<.5?225:265});\n    }\n    stars=[]; for(var k=0;k<90;k++){stars.push({x:Math.random()*W,y:Math.random()*H*.7,r:Math.random()*1.3*DPR,a:Math.random()});}\n  }\n  addEventListener(\'resize\',resize); resize();\n  addEventListener(\'mousemove\',function(e){mouse.x=e.clientX*DPR;mouse.y=e.clientY*DPR;});\n  addEventListener(\'mouseleave\',function(){mouse.x=-9999;mouse.y=-9999;});\n\n  function aurora(){\n    var cx=W*.5, cy=H*.42;\n    for(var i=0;i<3;i++){\n      var ang=t*(0.00035+i*0.00018)+i*2.1;\n      var x=cx+Math.cos(ang)*W*(0.18+i*0.06);\n      var y=cy+Math.sin(ang*1.3)*H*(0.10+i*0.05);\n      var rad=Math.max(W,H)*(0.26+i*0.05)+Math.sin(t*0.0012+i)*30*DPR;\n      var g=ctx.createRadialGradient(x,y,0,x,y,rad);\n      var hue=[225,265,190][i];\n      g.addColorStop(0,\'hsla(\'+hue+\',95%,64%,.34)\');\n      g.addColorStop(.55,\'hsla(\'+hue+\',95%,56%,.13)\');\n      g.addColorStop(1,\'hsla(\'+hue+\',95%,50%,0)\');\n      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);\n    }\n  }\n  function starfield(){\n    ctx.fillStyle=\'#fff\';\n    for(var i=0;i<stars.length;i++){\n      var s=stars[i];\n      s.a=0.25+0.75*Math.abs(Math.sin(t*0.0016+i));\n      ctx.globalAlpha=s.a*0.75;\n      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,6.2832); ctx.fill();\n    }\n    ctx.globalAlpha=1;\n  }\n  function network(){\n    for(var i=0;i<parts.length;i++){\n      var p=parts[i];\n      p.x+=p.vx; p.y+=p.vy;\n      if(p.x<0||p.x>W)p.vx*=-1;\n      if(p.y<0||p.y>H)p.vy*=-1;\n      var dx=p.x-mouse.x, dy=p.y-mouse.y, d2=dx*dx+dy*dy;\n      if(d2<26000*DPR){var f=(1-d2/(26000*DPR))*0.9; p.x+=dx/(Math.sqrt(d2)+1)*f; p.y+=dy/(Math.sqrt(d2)+1)*f;}\n      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,6.2832);\n      ctx.fillStyle=\'hsla(\'+p.hue+\',90%,68%,.85)\'; ctx.fill();\n    }\n    var link=175*DPR;\n    for(var a=0;a<parts.length;a++){\n      for(var b=a+1;b<parts.length;b++){\n        var dx2=parts[a].x-parts[b].x, dy2=parts[a].y-parts[b].y;\n        var dist=Math.sqrt(dx2*dx2+dy2*dy2);\n        if(dist<link){\n          ctx.strokeStyle=\'hsla(232,90%,70%,\'+(0.16*(1-dist/link))+\')\';\n          ctx.lineWidth=.7*DPR; ctx.beginPath();\n          ctx.moveTo(parts[a].x,parts[a].y); ctx.lineTo(parts[b].x,parts[b].y); ctx.stroke();\n        }\n      }\n    }\n    if(mouse.x>0){\n      for(var c=0;c<parts.length;c++){\n        var ddx=parts[c].x-mouse.x, ddy=parts[c].y-mouse.y, dd=Math.sqrt(ddx*ddx+ddy*ddy);\n        if(dd<210*DPR){\n          ctx.strokeStyle=\'hsla(190,95%,72%,\'+(0.35*(1-dd/(210*DPR)))+\')\';\n          ctx.lineWidth=.9*DPR; ctx.beginPath();\n          ctx.moveTo(parts[c].x,parts[c].y); ctx.lineTo(mouse.x,mouse.y); ctx.stroke();\n        }\n      }\n    }\n  }\n  function meteors(){\n    if(shoot.length===0&&Math.random()<0.014){\n      shoot.push({x:Math.random()*W,y:-40*DPR,vx:(1.6+Math.random()*1.4)*DPR,vy:(2.2+Math.random())*DPR,life:1});\n    }\n    for(var i=shoot.length-1;i>=0;i--){\n      var m=shoot[i];\n      m.x+=m.vx*3; m.y+=m.vy*3; m.life-=0.012;\n      var g2=ctx.createLinearGradient(m.x,m.y,m.x-m.vx*70,m.y-m.vy*70);\n      g2.addColorStop(0,\'rgba(190,215,255,\'+m.life+\')\');\n      g2.addColorStop(1,\'rgba(190,215,255,0)\');\n      ctx.strokeStyle=g2; ctx.lineWidth=1.6*DPR; ctx.beginPath();\n      ctx.moveTo(m.x,m.y); ctx.lineTo(m.x-m.vx*70,m.y-m.vy*70); ctx.stroke();\n      if(m.life<=0||m.y>H+60)shoot.splice(i,1);\n    }\n  }\n  function frame(){\n    t=performance.now();\n    ctx.clearRect(0,0,W,H);\n    var bg=ctx.createLinearGradient(0,0,W,H);\n    bg.addColorStop(0,\'#05070d\'); bg.addColorStop(.5,\'#080c16\'); bg.addColorStop(1,\'#060812\');\n    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);\n    aurora(); starfield(); network(); meteors();\n    requestAnimationFrame(frame);\n  }\n  requestAnimationFrame(frame);\n\n  var q=document.getElementById(\'q\'), tips=__TIPS__, ti=0;\n  if(tips.length){setInterval(function(){ti=(ti+1)%tips.length;q.setAttribute(\'placeholder\',tips[ti]);},2600);}\n  document.querySelectorAll(\'a.chip,button.primary\').forEach(function(el){\n    el.addEventListener(\'click\',function(ev){\n      var r=document.createElement(\'span\'), box=el.getBoundingClientRect();\n      r.style.cssText=\'position:fixed;left:\'+(ev.clientX-box.left)+\'px;top:\'+(ev.clientY-box.top)+\'px;\'+\n        \'width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.6);pointer-events:none;\'+\n        \'transform:translate(-50%,-50%);transition:all .55s ease-out;z-index:9\';\n      el.appendChild(r);\n      requestAnimationFrame(function(){r.style.width=\'130px\';r.style.height=\'130px\';r.style.opacity=\'0\';});\n      setTimeout(function(){r.remove();},560);\n    });\n  });\n})();\n</script>\n</body></html>\n'
+
+
+def _write_start_page(lang="zh"):
+    """本地起始页: 搜索 + 项目链接, 跟随界面语言。"""
+    try:
+        key = str(lang or "zh").lower()[:2]
+        data = dict(_START_PAGE_STRINGS.get(key, _START_PAGE_STRINGS["zh"]))
+        data["FOOT"] = data["FOOT"] % APP_VERSION
+        html = _START_PAGE_HTML
+        for name, value in data.items():
+            html = html.replace("__" + name + "__", value)
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        path = os.path.join(CONFIG_DIR, "start.html")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(html)
+        return path
+    except OSError:
+        return ""
+
+
+class EdgeBrowserShell:
+    """应用内浏览器窗口(系统 Edge + CDP)。
+
+    所有 CDP 调用都在后台线程执行: 前台只读缓存状态、只投递命令,
+    避免页面加载时把 Tk 主线程卡死。
+    """
+
+    POLL_INTERVAL = 0.15
+    TARGET_REFRESH = 1.5
+
+    def _wait_attach(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._attach_newest():
+                return True
+            if self.proc is not None and self.proc.poll() is not None:
+                # 进程已经退出(被转交给旧实例), 立刻重试, 不用等满超时
+                return False
+            time.sleep(0.25)
+        return False
+
+    def _kill_stale_instances(self):
+        """只清理使用本实例 profile 的旧 Edge, 不影响同一台机器上的另一个实例。"""
+        kill_profile_edges(self.profile_dir)
+
+    def __init__(self, profile_dir=None, lang="zh"):
+        self.lang = lang
+        self.profile_dir = profile_dir or BROWSER_PROFILE_DIR
+        self.proc = None
+        self.port = None
+        self._ws = None
+        self._send_lock = threading.Lock()
+        self._id = 0
+        self._commands = queue.Queue()
+        self._state_lock = threading.Lock()
+        self._state = {"ok": False, "url": "", "t": 0.0, "p": False, "r": 1.0}
+        self._state_ts = 0.0
+        self._stop = threading.Event()
+        self._worker = None
+        self._attached = None
+        self._known = set()
+        self._tabs_cache = []
+        self._dead = False
+        self._fail_count = 0
+
+    @staticmethod
+    def edge_path():
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+            os.path.expandvars(r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe"),
+        ]
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        return None
+
+    def available(self):
+        return self.edge_path() is not None
+
+    # ------------------------------------------------------------ 生命周期
+    def open(self, url=""):
+        if self.proc is not None:
+            return True
+        edge = self.edge_path()
+        if edge is None:
+            raise RuntimeError("未找到 Microsoft Edge, 无法打开内置浏览器")
+        start_page = _write_start_page(getattr(self, "lang", "zh"))
+        os.makedirs(self.profile_dir, exist_ok=True)
+        self.port = _free_tcp_port(9300, 9399)
+        # 默认窗口大小按屏幕比例给, 避免出现竖屏窄窗
+        try:
+            import ctypes
+            screen_w = int(ctypes.windll.user32.GetSystemMetrics(0))
+            screen_h = int(ctypes.windll.user32.GetSystemMetrics(1))
+        except Exception:
+            screen_w, screen_h = 1920, 1080
+        win_w = max(960, int(screen_w * 0.72))
+        win_h = max(600, int(screen_h * 0.78))
+        # 普通窗口(不是 --app): 上方保留地址栏, 站内链接按新选项卡打开
+        args = [
+            edge,
+            "--remote-debugging-port=%d" % self.port,
+            "--user-data-dir=%s" % self.profile_dir,
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--window-size=%d,%d" % (win_w, win_h),
+            # 普通窗口: 保留地址栏; 标签栏由代码维持"只有一个标签页"
+            "--new-window",
+            "file:///" + start_page.replace("\\", "/") if start_page else BROWSER_START_URL,
+        ]
+        self.proc = subprocess.Popen(
+            args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        last_error = "浏览器调试端口连接失败"
+        for attempt in range(2):
+            if attempt:
+                # 上一轮失败多半是旧实例占着同一个 user-data-dir:
+                # Edge 会把新进程转交给旧实例, 新调试端口根本不会监听。
+                self._kill_stale_instances()
+                time.sleep(0.8)
+                self.port = _free_tcp_port(9300, 9399)
+                args[1] = "--remote-debugging-port=%d" % self.port
+                self.proc = subprocess.Popen(
+                    args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            if self._wait_attach(6.0 if attempt == 0 else 12.0):
+                break
+            try:
+                self.proc.terminate()
+            except Exception:
+                pass
+            last_error = "浏览器调试端口连接失败 (端口 %d)" % self.port
+        else:
+            self._kill_stale_instances()
+            raise RuntimeError(last_error)
+        self._worker = threading.Thread(target=self._run, daemon=True,
+                                        name="browser-cdp")
+        self._worker.start()
+        if url:
+            self.navigate(url)
+        # 等第一次状态采集完成, 避免调用方读到空状态
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            with self._state_lock:
+                if self._state.get("ok") or self._state.get("url"):
+                    break
+            time.sleep(0.2)
+        return True
+
+    def _targets(self):
+        url = "http://127.0.0.1:%d/json" % self.port
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def _pick_target(targets):
+        pages = [t for t in targets
+                 if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        for target in pages:
+            url = str(target.get("url") or "")
+            if url.startswith(("http://", "https://", "file://")):
+                return target
+        return pages[0] if pages else None
+
+    def _attach_newest(self):
+        try:
+            targets = self._targets()
+        except Exception:
+            return False
+        target = self._pick_target(targets)
+        if target is None:
+            return False
+        try:
+            self._ws = _MiniWebSocket.connect(target["webSocketDebuggerUrl"])
+        except Exception:
+            self._ws = None
+            return False
+        self._attached = target.get("id")
+        self._known = {t.get("id") for t in targets if t.get("type") == "page"}
+        return True
+
+    def _connect_new_tab(self, targets):
+        """页面上点了 target=_blank 会开新选项卡: 跟随最新创建的那一个。"""
+        pages = {t.get("id"): t for t in targets if t.get("type") == "page"}
+        fresh = [tid for tid in pages if tid not in self._known]
+        if not fresh:
+            return False
+        target = self._pick_target([pages[tid] for tid in fresh])
+        if target is None:
+            return False
+        try:
+            ws = _MiniWebSocket.connect(target["webSocketDebuggerUrl"])
+        except Exception:
+            return False
+        self._ws = ws
+        self._attached = target.get("id")
+        self._known = set(pages)
+        return True
+
+    # ------------------------------------------------------------ CDP 原语
+    def _send(self, method, params=None):
+        with self._send_lock:
+            if self._ws is None:
+                return None
+            self._id += 1
+            command_id = self._id
+            self._ws.send_text(json.dumps({
+                "id": command_id, "method": method, "params": params or {},
+            }))
+            return command_id
+
+    def _wait_result(self, command_id, timeout=3.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            raw = self._ws.recv_text(timeout=max(0.3, deadline - time.monotonic()))
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                continue
+            if payload.get("id") != command_id:
+                continue
+            return payload.get("result") or {}
+        return None
+
+    def _evaluate(self, expression, timeout=3.0):
+        command_id = self._send("Runtime.evaluate", {
+            "expression": expression, "returnByValue": True, "awaitPromise": False,
+        })
+        if command_id is None:
+            return None
+        result = self._wait_result(command_id, timeout)
+        if not result:
+            return None
+        return (result.get("result") or {}).get("value")
+
+    def _read_now(self):
+        raw = self._evaluate(_WEB_STATE_JS)
+        if not isinstance(raw, str):
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+
+    # --------------------------------------------------------- 后台轮询线程
+    def _run(self):
+        last_refresh = 0.0
+        while not self._stop.is_set():
+            try:
+                self._drain_commands()
+                if self._attached:
+                    if self._port_alive():
+                        self._fail_count = 0
+                    else:
+                        self._fail_count += 1
+                        if self._fail_count >= 8:
+                            self._dead = True
+                now = time.monotonic()
+                if now - last_refresh >= self.TARGET_REFRESH:
+                    last_refresh = now
+                    try:
+                        targets = self._targets()
+                    except Exception:
+                        targets = None
+                        self._fail_count += 1
+                        if self._fail_count >= 5:
+                            # 连续失败: 浏览器窗口多半已经被关掉了
+                            self._dead = True
+                    else:
+                        self._fail_count = 0
+                    if targets is not None:
+                        ids = {t.get("id") for t in targets if t.get("type") == "page"}
+                        if self._attached not in ids:
+                            self._attach_newest()
+                        else:
+                            self._ensure_real_page()
+                            self._detect_active_tab()
+                        try:
+                            # 标签页列表只在这里(后台线程)拉, 供 UI 侧读缓存
+                            self._tabs_cache = self.list_tabs()
+                        except Exception:
+                            pass
+                state = self._read_now()
+                if state is not None:
+                    with self._state_lock:
+                        self._state = state
+                        self._state_ts = time.monotonic()
+            except Exception:
+                log.debug("浏览器轮询异常", exc_info=True)
+                self._ws = None
+                time.sleep(0.5)
+            time.sleep(self.POLL_INTERVAL)
+
+    def _follow_active_video(self, targets):
+        """当前标签页没有视频时, 自动找到其它标签页里正在播放的视频并切过去。"""
+        try:
+            with self._state_lock:
+                has_video = bool(self._state.get("ok"))
+        except Exception:
+            return
+        if has_video:
+            return
+        pages = [t for t in (targets or [])
+                 if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        if len(pages) < 2:
+            return
+        for target in pages:
+            if target.get("id") == self._attached:
+                continue
+            state = self._probe_target(target)
+            if state and state.get("ok"):
+                try:
+                    self._ws = _MiniWebSocket.connect(target["webSocketDebuggerUrl"])
+                    self._attached = target.get("id")
+                    log.info("同步跟随到含视频的标签页: %s", state.get("url"))
+                except Exception:
+                    log.debug("切换到视频标签页失败", exc_info=True)
+                return
+
+    @staticmethod
+    def _probe_target(target):
+        ws = None
+        try:
+            ws = _MiniWebSocket.connect(target["webSocketDebuggerUrl"], timeout=1.5)
+            ws.send_text(json.dumps({
+                "id": 1, "method": "Runtime.evaluate",
+                "params": {"expression": _WEB_STATE_JS, "returnByValue": True},
+            }))
+            raw = ws.recv_text(timeout=1.5)
+            payload = json.loads(raw)
+            value = ((payload.get("result") or {}).get("result") or {}).get("value")
+            return json.loads(value) if isinstance(value, str) else None
+        except Exception:
+            return None
+        finally:
+            if ws is not None:
+                try:
+                    ws._sock.close()
+                except Exception:
+                    pass
+
+    def _ensure_real_page(self):
+        """当前挂着的可能是 edge:// 内部页(同步确认框等), 迁到真实网页。"""
+        try:
+            targets = self._targets()
+        except Exception:
+            return
+        real = [t for t in targets
+                if t.get("type") == "page"
+                and str(t.get("url") or "").startswith(("http://", "https://", "file://"))]
+        if not real:
+            return
+        for target in real:
+            if target.get("id") == self._attached:
+                return
+        self._select_now(real[0].get("id"))
+
+    def _port_alive(self):
+        """快速判断调试端口还在不在(浏览器关掉后端口会立刻消失)。"""
+        if self.port is None:
+            return False
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.25)
+        try:
+            return sock.connect_ex(("127.0.0.1", self.port)) == 0
+        except Exception:
+            return False
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _detect_active_tab(self):
+        """找出用户真正在前台看的标签页(可见且获焦), 不能只信我们自己的连接。"""
+        try:
+            targets = self._targets()
+        except Exception:
+            return
+        pages = [t for t in targets
+                 if t.get("type") == "page" and t.get("webSocketDebuggerUrl")
+                 and str(t.get("url") or "").startswith(("http://", "https://", "file://"))]
+        if not pages:
+            return
+        if len(pages) == 1:
+            target = pages[0]
+            if target.get("id") != self._attached:
+                self._select_now(target.get("id"))
+            return
+        fallback = None
+        chosen = None
+        for target in pages:
+            info = self._probe_visibility(target)
+            if not info or not info.get("visible"):
+                continue
+            if info.get("focus"):
+                chosen = target
+                break
+            if fallback is None:
+                fallback = target
+        if chosen is None:
+            chosen = fallback
+        if chosen is None:
+            return
+        if chosen.get("id") != self._attached:
+            self._select_now(chosen.get("id"))
+
+    @staticmethod
+    def _probe_visibility(target):
+        ws = None
+        try:
+            ws = _MiniWebSocket.connect(target["webSocketDebuggerUrl"], timeout=1.5)
+            ws.send_text(json.dumps({
+                "id": 1, "method": "Runtime.evaluate",
+                "params": {"expression":
+                           "JSON.stringify({v:document.visibilityState,"
+                           "f:document.hasFocus()})",
+                           "returnByValue": True},
+            }))
+            payload = json.loads(ws.recv_text(timeout=1.5))
+            value = ((payload.get("result") or {}).get("result") or {}).get("value")
+            data = json.loads(value) if isinstance(value, str) else {}
+            return {"visible": data.get("v") == "visible",
+                    "focus": bool(data.get("f"))}
+        except Exception:
+            return None
+        finally:
+            if ws is not None:
+                try:
+                    ws._sock.close()
+                except Exception:
+                    pass
+
+    def _absorb_new_tab(self):
+        """网页里 target=_blank 会开新标签页: 把它读出来, 关掉, 在当前页打开。"""
+        try:
+            targets = self._targets()
+        except Exception:
+            return
+        pages = [t for t in targets
+                 if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        if len(pages) < 2:
+            return
+        for target in pages:
+            if target.get("id") == self._attached:
+                continue
+            url = str(target.get("url") or "")
+            self.close_tab(target.get("id"))
+            if url and not url.startswith(("about:", "edge:", "chrome:", "devtools:")):
+                self.navigate(url)
+            return
+
+    @property
+    def dead(self):
+        return self._dead
+
+    def cached_tabs(self):
+        """UI 侧只读缓存, 不做 HTTP 请求(否则会卡 Tk 主线程)。"""
+        return list(self._tabs_cache)
+
+    def select_tab(self, tab_id):
+        """把本地指向切到指定标签页, 并把 CDP 会话接到它上面。"""
+        self._commands.put(("select", tab_id))
+
+    def _select_now(self, tab_id):
+        try:
+            targets = self._targets()
+        except Exception:
+            return
+        target = None
+        for item in targets:
+            if item.get("id") == tab_id:
+                target = item
+                break
+        if target is None or not target.get("webSocketDebuggerUrl"):
+            return
+        try:
+            self.activate_tab(tab_id)
+        except Exception:
+            pass
+        try:
+            self._ws = _MiniWebSocket.connect(target["webSocketDebuggerUrl"])
+            self._attached = tab_id
+            self._known = {x.get("id") for x in targets if x.get("type") == "page"}
+        except Exception:
+            log.debug("切换 CDP 会话失败", exc_info=True)
+
+    def _drain_commands(self):
+        while True:
+            try:
+                action, payload = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                if action == "navigate":
+                    self._send("Page.navigate", {"url": payload})
+                elif action == "apply":
+                    position, playing, rate = payload
+                    self._evaluate(_web_apply_js(position, playing, rate))
+                elif action == "select":
+                    self._select_now(payload)
+            except Exception:
+                log.debug("浏览器命令执行失败: %s", action, exc_info=True)
+
+    # ------------------------------------------------------------ 对外 API
+    @property
+    def attached_id(self):
+        return self._attached or ""
+
+    def list_tabs(self):
+        """按浏览器返回顺序列出所有标签页。"""
+        try:
+            targets = self._targets()
+        except Exception:
+            return []
+        tabs = []
+        for target in targets:
+            if target.get("type") != "page":
+                continue
+            url = str(target.get("url") or "")
+            if not url or url.startswith("devtools://"):
+                continue
+            # 过滤 Edge 内部页(新建标签页确认框、设置页等), 这些不该同步
+            if url.startswith(("edge://", "chrome://", "about:")):
+                continue
+            if "confirmation-dialog" in url:
+                continue
+            tabs.append({"id": target.get("id"), "url": url,
+                         "title": target.get("title") or ""})
+        return tabs
+
+    def close_tab(self, tab_id):
+        try:
+            endpoint = "http://127.0.0.1:%d/json/close/%s" % (self.port, tab_id)
+            request = urllib.request.Request(endpoint, method="GET")
+            with urllib.request.urlopen(request, timeout=3) as response:
+                response.read()
+            return True
+        except Exception:
+            return False
+
+    def activate_tab(self, tab_id):
+        try:
+            endpoint = "http://127.0.0.1:%d/json/activate/%s" % (self.port, tab_id)
+            request = urllib.request.Request(endpoint, method="GET")
+            with urllib.request.urlopen(request, timeout=3) as response:
+                response.read()
+            return True
+        except Exception:
+            return False
+
+    def open_tab(self, url):
+        """在浏览器里新开一个选项卡(主持新开的标签页同步过来时用)。"""
+        if self.port is None:
+            return False
+        try:
+            endpoint = "http://127.0.0.1:%d/json/new?%s" % (
+                self.port, urllib.parse.quote(url, safe=""))
+            request = urllib.request.Request(endpoint, method="PUT")
+            with urllib.request.urlopen(request, timeout=3) as response:
+                raw = response.read().decode("utf-8", "ignore")
+            try:
+                return (json.loads(raw) or {}).get("id")
+            except ValueError:
+                return None
+        except Exception:
+            log.debug("新建标签页失败, 退化为当前页导航", exc_info=True)
+            self.navigate(url)
+            return False
+
+    def read_state(self):
+        """返回缓存状态(不阻塞)。"""
+        with self._state_lock:
+            return dict(self._state)
+
+    def state_age(self):
+        with self._state_lock:
+            return time.monotonic() - self._state_ts
+
+    def navigate(self, url):
+        self._commands.put(("navigate", url))
+
+    def apply(self, position, playing, rate=1.0):
+        self._commands.put(("apply", (float(position), bool(playing), float(rate))))
+
+    def close(self):
+        self._stop.set()
+        try:
+            self._send("Browser.close")
+        except Exception:
+            pass
+        time.sleep(0.2)
+        try:
+            if self.proc is not None:
+                self.proc.terminate()
+        except Exception:
+            pass
+        try:
+            self._kill_stale_instances()
+        except Exception:
+            pass
+        self._ws = None
+        self.proc = None
 
 
 def main():
