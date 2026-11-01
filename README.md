@@ -36,6 +36,17 @@ The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners
 
 <img src="screenshots/en/browser-sync.png" width="860" alt="Browser sync start page">
 
+## What's new in v1.2.4
+
+- **Per-guest control permission**: hosts can flip each guest between *view only* (default) and *can control* right next to the kick button. View-only guests are rejected at the command gate for seek / rate / play / pause / toggle / seek_rel / seek_ratio / volume / mute / stop / web_cmd / web_url.
+- **Reverse sync from the browser**: seeking, changing playback speed and pausing inside the page are detected by prediction-deviation and reported to the host, so "control in the browser" finally works both ways.
+- **Single authority in browser sync**: the main window's playback controls are greyed out and blocked (including shortcuts) while a browser session is active.
+- **19-stage `[seek]` diagnostics**: every hop of a seek is logged, so a failed drag can be localised from the log alone.
+- **Full bilingual UI**: window titles, dialog titles and Canvas-drawn strings are translated too (375 literals / 285 keys).
+- **Fixes**: window stayed always-on-top after leaving fullscreen; speed changes were reset by seek; guest joining a browser room did not open the browser.
+
+See [docs/design-supplement.md](docs/design-supplement.md) for the technical write-up.
+
 ## Features
 
 ### Playback

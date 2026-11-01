@@ -67,7 +67,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 
 APP_TITLE = "Nobplaypot"
-APP_VERSION = "v1.2.3"
+APP_VERSION = "v1.2.4"
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA") or os.path.expanduser("~"), "Nobplaypot"
 )
@@ -312,7 +312,7 @@ I18N = {
     "调整强调色与界面底色; 改动需要重启软件后生效。": "Accent colour and surface tone; changes take effect after restart.",
     "用户名、聊天记录与弹幕显示。": "Username, chat history and danmaku display.",
     "推流参数、端口与客户端缓冲。": "Streaming parameters, ports and client buffering.",
-    "界面语言 / Language": "Interface language / 界面语言",
+    "界面语言 / Language": "Interface language",
     "保存后生效（重启后仍然生效）": "Takes effect after Save (persists after restart)",
     "中文": "中文",
     "English": "English",
@@ -692,6 +692,22 @@ I18N = {
         "Host: open command/media ports and push the current playback to other devices\n"
         "Join: receive and render the host stream (playback controls run on the host)\n"
         "Browser Sync: no streaming, only the page URL and playback position (HTML5 only)",
+
+    "主持开启了房间密码, 请输入密码后加入。": "The host enabled a room password. Enter it to join.",
+    "房间需要密码, 请输入密码": "This room requires a password",
+    "主持已停止播放": "The host stopped playback",
+    "正在连接主持…": "Connecting to host…",
+    "与主持失去连接 · 自动重连中…": "Lost connection to the host · reconnecting…",
+
+    "可控制": "Can control",
+    "只读": "View only",
+    "允许该房客参与播放控制": "Allow this guest to control playback",
+    "主持已允许你参与控制": "The host let you control playback",
+    "只读模式 · 仅主持可控制播放": "View-only mode · only the host controls playback",
+
+    "同步播放": "Synced playback",
+    "打开网址…": "Open URL…",
+    "输入网址：": "Enter URL:",
 
 }
 
@@ -2622,6 +2638,7 @@ class StreamHostServer(socketserver.ThreadingTCPServer):
                 "name": None,
                 "stream": None,
                 "last_seen": time.time(),
+                "control": False,
             }
             return client_id
 
@@ -2630,6 +2647,20 @@ class StreamHostServer(socketserver.ThreadingTCPServer):
             entry = self._clients.get(client_id)
             if entry is not None:
                 entry["last_seen"] = time.time()
+
+    def set_control(self, client_id, allowed):
+        """设置某个房客是否允许参与控制(默认只读)。"""
+        with self._lock:
+            entry = self._clients.get(client_id)
+            if entry is None:
+                return False
+            entry["control"] = bool(allowed)
+            return True
+
+    def can_control(self, client_id):
+        with self._lock:
+            entry = self._clients.get(client_id)
+            return bool(entry and entry.get("control"))
 
     def set_client_info(self, client_id, name, stream):
         with self._lock:
@@ -2674,6 +2705,14 @@ class StreamHostServer(socketserver.ThreadingTCPServer):
             return False
         return self._send_to_handler(entry["handler"], message)
 
+    def send_to(self, client_id, message):
+        with self._lock:
+            entry = self._clients.get(client_id)
+            handler = entry["handler"] if entry else None
+        if handler is None:
+            return False
+        return self._send_to_handler(handler, message)
+
     def broadcast(self, message):
         with self._lock:
             handlers = [entry["handler"] for entry in self._clients.values()]
@@ -2698,7 +2737,7 @@ class StreamHostServer(socketserver.ThreadingTCPServer):
         with self._lock:
             return [
                 {"id": entry["id"], "name": entry["name"] or f"客户端-{entry['id']}",
-                 "addr": entry["addr"]}
+                 "addr": entry["addr"], "control": bool(entry.get("control"))}
                 for entry in self._clients.values()
             ]
 
@@ -2757,6 +2796,28 @@ class StreamHostServer(socketserver.ThreadingTCPServer):
 def _colorref(color):
     r, g, b = _rgb(color)
     return r | (g << 8) | (b << 16)
+
+
+def clear_topmost(window):
+    """强制去掉窗口的 WS_EX_TOPMOST(全屏退出后防止窗口卡在置顶)。"""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        if not hwnd:
+            hwnd = window.winfo_id()
+        HWND_NOTOPMOST = ctypes.c_void_p(-2)
+        SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+        ctypes.windll.user32.SetWindowPos(
+            ctypes.c_void_p(hwnd), HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+        style = ctypes.windll.user32.GetWindowLongW(ctypes.c_void_p(hwnd), -20)
+        log.debug("退出全屏后 exstyle=0x%08X topmost=%s", style,
+                  bool(style & 0x00000008))
+    except Exception:
+        log.debug("清除置顶失败", exc_info=True)
 
 
 def apply_dark_titlebar(window, caption=C.DECK, text_color=C.TEXT_MUTED):
@@ -3116,7 +3177,8 @@ class RoundedButton(HoverCanvas):
         spec = self._spec
         mix_value = self._mix
         if not self._enabled:
-            fill, fg = spec["fill"], C.TEXT_DIM
+            fill = mix(C.SURFACE, C.BG, 0.55) if spec["fill"] != self._canvas_bg else self._canvas_bg
+            fg = C.TEXT_DIM
         elif self._active:
             fill, fg = C.ACCENT_SOFT, C.ACCENT
         elif self._pressed:
@@ -3172,6 +3234,7 @@ class Slider(tk.Canvas):
         self._thumb_radius = 4.5 if compact else 5.5
         # 圆点悬停时会放大, 左右留出足够空间, 避免 0%/100% 处被裁掉
         self._pad = max(float(pad), self._thumb_radius * 2.6 + 6.0)
+        self._enabled = True
         self._active = False
         self._hover = False
         self._anim_job = None
@@ -3200,6 +3263,8 @@ class Slider(tk.Canvas):
         self._var.set(round(value) if self._integral else value)
 
     def refresh(self):
+        if not getattr(self, "_enabled", True):
+            return self._render_disabled()
         ratio = (self.value() - self._from) / (self._to - self._from) if self._to != self._from else 0.0
         ratio = clamp(ratio, 0.0, 1.0)
         size = (self.winfo_width(), self.winfo_height())
@@ -3213,6 +3278,18 @@ class Slider(tk.Canvas):
     # -------------------------------------------------------------- 内部
     def _on_var_write(self, *_args):
         self.refresh()
+
+    def _render_disabled(self):
+        try:
+            self.delete("all")
+            width = max(1, self.winfo_width())
+            height = max(1, self.winfo_height())
+            cy = height / 2.0
+            self.create_line(self._pad, cy, width - self._pad, cy,
+                             fill=mix(C.STROKE, C.BG, 0.45), width=self._track_width,
+                             capstyle=tk.ROUND)
+        except tk.TclError:
+            pass
 
     def _ratio_at(self, x):
         width = max(2, self.winfo_width())
@@ -3229,7 +3306,22 @@ class Slider(tk.Canvas):
         if self._command is not None:
             self._command(value)
 
+    def set_enabled(self, enabled):
+        self._enabled = bool(enabled)
+        try:
+            self.configure(cursor="hand2" if self._enabled else "arrow")
+        except tk.TclError:
+            pass
+        self.refresh()
+
     def _on_press(self, event):
+        if not getattr(self, "_enabled", True):
+            return
+        try:
+            seek_trace("ui.slider.press", widget=self.winfo_name(),
+                       value=round(float(self.value()), 1), x=int(event.x))
+        except Exception:
+            pass
         self._active = True
         self._hover = True
         self._hover_mix = 1.0
@@ -3242,6 +3334,11 @@ class Slider(tk.Canvas):
             self._set_from_x(event.x)
 
     def _on_release(self, event):
+        try:
+            seek_trace("ui.slider.release", widget=self.winfo_name(),
+                       value=round(float(self.value()), 1), x=int(event.x))
+        except Exception:
+            pass
         if not self._active:
             return
         self._set_from_x(event.x)
@@ -3360,17 +3457,25 @@ class Dropdown(HoverCanvas):
     def _render(self):
         width, height = self._cw, self._ch
         mix_value = self._mix
+        enabled = getattr(self, "_enabled", True)
         fill = mix(self._canvas_bg, C.SURFACE, max(0.35, mix_value))
         outline = mix(C.STROKE, C.SURFACE_HI, mix_value)
+        if not enabled:
+            fill = self._canvas_bg
+            outline = mix(C.STROKE, C.BG, 0.5)
         self.delete("all")
         draw_round_rect(self, 1, 1, width - 1, height - 1, 9, fill=fill,
                         outline=outline, width=1)
-        self.create_text(13, height / 2, text=tr(self._var.get()), fill=C.TEXT,
+        self.create_text(13, height / 2, text=tr(self._var.get()),
+                         fill=C.TEXT if enabled else C.TEXT_DIM,
                          font=self._font, anchor="w")
-        icon_chevron(self, width - 14, height / 2, 16, C.TEXT_MUTED if not self._hovering else C.TEXT)
+        icon_chevron(self, width - 14, height / 2, 16,
+                     C.TEXT_DIM if not enabled else (C.TEXT_MUTED if not self._hovering else C.TEXT))
 
     # -------------------------------------------------------------- 弹层
     def _toggle(self):
+        if not getattr(self, "_enabled", True):
+            return
         if self._popup is not None:
             self._close()
         else:
@@ -3452,6 +3557,7 @@ class EmptyStateView(tk.Canvas):
     def __init__(self, master, on_open=None, bg=C.VIDEO):
         super().__init__(master, bg=bg, highlightthickness=0, bd=0)
         self._on_open = on_open
+        self._enabled = True
         self._hover_button = False
         self._button_rect = None
         self.configure(cursor="arrow")
@@ -3491,12 +3597,27 @@ class EmptyStateView(tk.Canvas):
         button_w, button_h = 146.0, 40.0
         bx0 = cx - button_w / 2
         by0 = y0 + 208
-        fill = C.ACCENT_HOVER if self._hover_button else C.ACCENT
+        enabled = getattr(self, "_enabled", True)
+        if not enabled:
+            fill = mix(C.ACCENT, C.CARD, 0.72)
+        else:
+            fill = C.ACCENT_HOVER if self._hover_button else C.ACCENT
         draw_round_rect(self, bx0, by0, bx0 + button_w, by0 + button_h, 20,
                         fill=fill, outline=fill, width=1)
         self.create_text(cx, by0 + button_h / 2, text=tr("选择视频文件"),
-                         fill="#0A0D15", font=ui_font(10, True))
+                         fill="#0A0D15" if enabled else C.TEXT_DIM,
+                         font=ui_font(10, True))
         self._button_rect = (bx0, by0, bx0 + button_w, by0 + button_h)
+
+    def set_enabled(self, enabled):
+        self._enabled = bool(enabled)
+        if not self._enabled:
+            self._hover_button = False
+            try:
+                self.configure(cursor="arrow")
+            except tk.TclError:
+                pass
+        self._render()
 
     def _inside_button(self, x, y):
         if not self._button_rect:
@@ -3505,6 +3626,8 @@ class EmptyStateView(tk.Canvas):
             self._button_rect[1] <= y <= self._button_rect[3]
 
     def _on_motion(self, event):
+        if not getattr(self, "_enabled", True):
+            return
         inside = self._inside_button(event.x, event.y)
         if inside != self._hover_button:
             self._hover_button = inside
@@ -4143,7 +4266,7 @@ class StreamMenuDialog(_StreamDialogBase):
                      wraplength=380).pack(fill=tk.X, pady=(14, 0))
         if web:
             RoundedButton(
-                self.body, text="打开网址…", variant="ghost", width=380, height=38,
+                self.body, text=tr("打开网址…"), variant="ghost", width=380, height=38,
                 bg=C.BG, command=lambda: self.finish("open_url"), font=ui_font(10),
             ).pack(fill=tk.X, pady=(10, 0))
         self._footer("取消", self.finish, cancel=False)
@@ -4258,7 +4381,7 @@ class RoomPasswordDialog(_StreamDialogBase):
                               radius=8, bg=C.BG, font=ui_font(12),
                               command=self._do_cancel, tooltip="关闭")
         close.pack(side=tk.RIGHT)
-        tk.Label(self.body, text="主持开启了房间密码, 请输入密码后加入。",
+        tk.Label(self.body, text=tr("主持开启了房间密码, 请输入密码后加入。"),
                  bg=C.BG, fg=C.TEXT_MUTED, font=ui_font(9), anchor="w").pack(
             fill=tk.X, pady=(4, 12))
         self.password_var = tk.StringVar(value="")
@@ -4831,13 +4954,14 @@ class RoomMembersDialog(tk.Toplevel):
     """房间成员列表: 主持在最上面, 房客按加入顺序排列, 可滚动。"""
 
     def __init__(self, master, on_kick=None, on_close=None,
-                 is_host=False, my_id=""):
+                 is_host=False, my_id="", on_toggle_control=None):
         super().__init__(master)
         self.withdraw()
         self.overrideredirect(True)
         self.configure(bg=C.BG)
         self.title("房间成员")
         self._on_kick = on_kick
+        self._on_toggle_control = on_toggle_control
         self._on_close = on_close
         self._is_host = is_host
         self._my_id = my_id
@@ -4942,6 +5066,19 @@ class RoomMembersDialog(tk.Toplevel):
                 radius=7, bg=C.SURFACE, font=ui_font(8),
                 command=lambda cid=member.get("id"): self._kick(cid),
             ).pack(side=tk.RIGHT)
+            allowed = bool(member.get("control"))
+            RoundedButton(
+                line,
+                text=tr("可控制") if allowed else tr("只读"),
+                variant="subtle" if allowed else "ghost",
+                width=64, height=26, radius=7, bg=C.SURFACE, font=ui_font(8),
+                command=lambda cid=member.get("id"), cur=allowed: self._toggle_control(cid, cur),
+                tooltip=tr("允许该房客参与播放控制"),
+            ).pack(side=tk.RIGHT, padx=(0, 6))
+
+    def _toggle_control(self, client_id, currently_allowed):
+        if client_id and self._on_toggle_control is not None:
+            self._on_toggle_control(client_id, not currently_allowed)
 
     def _kick(self, client_id):
         if client_id and self._on_kick is not None:
@@ -5624,7 +5761,7 @@ class BufferingOverlay(tk.Canvas):
         dot_px = max(6, size * 0.080)
         text_px = max(10, size * 0.065)
         self._text = self.create_text(
-            cx, size * 0.82, text="缓冲中…", fill="#FFFFFF",
+            cx, size * 0.82, text=tr("缓冲中…"), fill="#FFFFFF",
             font=self._font(text_px), anchor="center")
         self._dots = []
         for i in range(self.DOTS):
@@ -5769,26 +5906,26 @@ class StreamWatchView(tk.Canvas):
         icon_broadcast(self, cx, icon_cy, 22, C.ACCENT)
 
         if phase == "connecting":
-            title = "正在连接主持…"
+            title = tr("正在连接主持…")
         elif phase == "reconnecting":
-            title = "与主持失去连接 · 自动重连中…"
+            title = tr("与主持失去连接 · 自动重连中…")
         else:
-            title = info.get("name") or "等待主持开始播放"
+            title = info.get("name") or tr("等待主持开始播放")
         self.create_text(cx, y0 + 122, text=title, fill=C.TEXT,
                          font=ui_font(15, True), width=card_w - 60)
         if phase == "joined":
             room = info.get("room") or 0
             host = info.get("host") or "?"
-            self.create_text(cx, y0 + 156, text=f"与主持同步播放 · 房间 {room} 人 · 主持 {host}",
+            self.create_text(cx, y0 + 156, text=tr(f"与主持同步播放 · 房间 {room} 人 · 主持 {host}"),
                              fill=C.TEXT_MUTED, font=ui_font(10))
-        self.create_text(cx, y0 + 186, text="画面仅主持端渲染 · 本机只同步状态与控制",
+        self.create_text(cx, y0 + 186, text=tr("画面仅主持端渲染 · 本机只同步状态与控制"),
                          fill=C.TEXT_DIM, font=ui_font(9))
         if phase == "joined":
             self.create_text(cx, y0 + 214,
-                             text="客户端直接渲染主持推流 · 控制指令交给主持执行",
+                             text=tr("客户端直接渲染主持推流 · 控制指令交给主持执行"),
                              fill=C.TEXT_DIM, font=ui_font(9))
         elif phase in ("reconnecting",):
-            self.create_text(cx, y0 + 214, text="重连后会自动恢复同步",
+            self.create_text(cx, y0 + 214, text=tr("重连后会自动恢复同步"),
                              fill=C.TEXT_DIM, font=ui_font(9))
 
 
@@ -6695,6 +6832,9 @@ class VideoPlayerApp:
         "_web_tab_map": None, "_web_tab_open_ts": None, "_web_local_active": "",
         "_web_ignore_local_until": 0.0, "_web_duration": 0.0, "_web_pos": 0.0,
         "_web_dragging": False, "_web_rate": 0.0, "_web_hold_until": 0.0,
+        "_web_seen_pos": None, "_web_seen_ts": 0.0, "_web_seen_rate": 1.0,
+        "_web_seen_playing": False, "_web_rate_latch": None,
+        "_web_cmd_guard_until": 0.0, "_client_can_control": False,
         "_web_job": None, "_web_last_note": "", "_web_opening": False, "_web_token": 0,
         "_browser_slot": 0, "_browser_profile": None, "_browser_lock": "",
     }
@@ -6770,6 +6910,28 @@ class VideoPlayerApp:
         threading.Thread(target=worker, daemon=True, name="browser-open").start()
         return None
 
+    def set_playback_controls_enabled(self, enabled):
+        """浏览器同步模式下: 灰掉主窗口的播放类控件(一切操作都在浏览器里做)。"""
+        enabled = bool(enabled)
+        widgets = ("play_button", "stop_button", "back_button", "forward_button",
+                   "open_button", "track_button", "mute_button", "speed_box",
+                   "volume_scale", "progress", "fs_progress", "fs_volume",
+                   "drop_hint")
+        for name in widgets:
+            widget = getattr(self, name, None)
+            setter = getattr(widget, "set_enabled", None)
+            if setter is None:
+                continue
+            try:
+                setter(enabled)
+            except tk.TclError:
+                pass
+        try:
+            self.volume_label.configure(fg=C.TEXT_MUTED if enabled else C.TEXT_DIM)
+        except (tk.TclError, AttributeError):
+            pass
+        log.info("播放控件%s (浏览器同步模式)", "已启用" if enabled else "已灰化")
+
     def start_web_hosting(self, cmd_port, password=""):
         """主持端: 先起同步房间, 浏览器在后台拉起(不阻塞界面)。"""
         self._web_ensure_fields()
@@ -6781,6 +6943,7 @@ class VideoPlayerApp:
             self._web_mode = False
             return
         self._web_schedule_tick()
+        self.set_playback_controls_enabled(False)
         self._set_status("浏览器同步已开始 · 正在打开浏览器…", "ok")
         self._web_open_browser("", callback=self._web_host_browser_ready)
 
@@ -6816,6 +6979,7 @@ class VideoPlayerApp:
             return
         if self._web_mode and self._client_active and browser is not None:
             self._web_report_local_url(browser)
+            self._web_detect_local_seek(browser)
         if self._web_mode and self._hosting and browser is not None:
             try:
                 state = browser.read_state() or {}
@@ -6825,6 +6989,15 @@ class VideoPlayerApp:
             tab = browser.attached_id
             playing = bool(state.get("p"))
             now = time.monotonic()
+            rate_latch = getattr(self, "_web_rate_latch", None)
+            if rate_latch and now < rate_latch[1]:
+                if abs(float(state.get("r") or 1.0) - rate_latch[0]) < 0.05:
+                    self._web_rate_latch = None
+                else:
+                    state = dict(state)
+                    state["r"] = rate_latch[0]
+            elif rate_latch:
+                self._web_rate_latch = None
             latch = getattr(self, "_web_seek_latch", None)
             measured = float(state.get("t") or 0.0)
             if latch and now < latch[1]:
@@ -6875,6 +7048,11 @@ class VideoPlayerApp:
             return
         url = str(message.get("url") or "")
         self._web_tab = str(message.get("tab") or self._web_tab)
+        seek_trace("client.recv.state", pos=round(float(message.get("pos") or 0.0), 3),
+                   duration=round(float(message.get("duration") or 0.0), 3),
+                   rate=message.get("rate"), ok=str(message.get("ok")),
+                   holding=str(time.monotonic() < getattr(self, "_web_hold_until", 0.0)),
+                   dragging=str(getattr(self, "_web_dragging", False)))
         # 先把时长/进度记下来: 即使这一轮在导航, 进度条也能用
         duration = float(message.get("duration") or 0.0)
         position = float(message.get("pos") or 0.0)
@@ -6898,11 +7076,23 @@ class VideoPlayerApp:
             return
         rate = float(message.get("rate") or 1.0)
         holding = time.monotonic() < getattr(self, "_web_hold_until", 0.0)
+        if not holding and abs(rate - float(getattr(self, "_web_rate", 0.0) or 0.0)) > 0.05:
+            self._web_ignore_local_until = time.monotonic() + 1.0
+            self._web_rate = rate
+            setter = getattr(browser, "set_rate", None)
+            if setter is not None:
+                seek_trace("client.apply.rate", rate=rate)
+                try:
+                    setter(rate)
+                except Exception:
+                    log.debug("客户端应用倍速失败", exc_info=True)
         label = ("%.2f" % rate).rstrip("0").rstrip(".") + "x"
         if (not holding) and getattr(self, "speed_var", None) is not None \
                 and self.speed_var.get() != label:
             self.speed_var.set(label)
-        if duration > 0 and not getattr(self, "_web_dragging", False) and not holding:
+        # 浏览器同步模式: 进度只在网页里体现, 不回写主窗口进度条
+        if not getattr(self, "_web_mode", False) and duration > 0 \
+                and not getattr(self, "_web_dragging", False) and not holding:
             self.progress_var.set(max(0.0, min(1000.0, position / duration * 1000.0)))
             self.time_label.configure(text=format_time(int(position * 1000)))
             self.duration_label.configure(text=format_time(int(duration * 1000)))
@@ -6962,7 +7152,7 @@ class VideoPlayerApp:
                 self._web_tab_open_ts[host_id] = time.monotonic()
         client_active = self._web_tab_map.get(active_id)
         if client_active:
-            self._web_ignore_local_until = time.monotonic() + 1.5
+            self._web_ignore_local_until = time.monotonic() + 1.0
             browser.select_tab(client_active)
 
     def _web_pending(self, url):
@@ -7040,6 +7230,65 @@ class VideoPlayerApp:
         self._web_url = url
         self._client_send({"v": STREAM_VERSION, "type": "web_url", "url": url})
 
+    def _web_detect_local_seek(self, browser):
+        if not getattr(self, "_client_can_control", True):
+            return
+        """房客在浏览器里自己拖动进度 / 改倍速时, 反向通知主持。"""
+        try:
+            state = browser.read_state() or {}
+        except Exception:
+            return
+        now = time.monotonic()
+        if not state.get("ok"):
+            self._web_seen_pos = None
+            return
+        pos = float(state.get("t") or 0.0)
+        rate = float(state.get("r") or 1.0)
+        playing = bool(state.get("p"))
+        if self._web_seen_pos is None:
+            self._web_seen_pos, self._web_seen_ts = pos, now
+            self._web_seen_rate, self._web_seen_playing = rate, playing
+            return
+        prev_rate = self._web_seen_rate
+        prev_playing = self._web_seen_playing
+        elapsed = max(0.0, now - self._web_seen_ts)
+        expected = self._web_seen_pos
+        if self._web_seen_playing:
+            expected += elapsed * self._web_seen_rate
+        delta = pos - expected
+        self._web_seen_pos, self._web_seen_ts = pos, now
+        self._web_seen_rate, self._web_seen_playing = rate, playing
+        if now < getattr(self, "_web_ignore_local_until", 0.0):
+            return
+        # 刚发过指令的 1.2 秒内不再采样: 防止站点延迟上报造成 暂停/播放 来回抖
+        if now < getattr(self, "_web_cmd_guard_until", 0.0):
+            return
+        # 0) 网页里暂停 / 继续
+        if prev_playing != playing:
+            seek_trace("client.detect.browser_play", playing=str(playing),
+                       prev_playing=str(prev_playing))
+            self._web_hold_until = now + 1.5
+            self._web_cmd_guard_until = now + 1.2
+            self._client_send_cmd("play" if playing else "pause", None)
+            return
+        # 1) 网页里改了倍速
+        if abs(rate - prev_rate) > 0.05:
+            seek_trace("client.detect.browser_rate", rate=rate, prev_rate=prev_rate,
+                       playing=str(playing))
+            self._web_hold_until = now + 2.0
+            self._web_cmd_guard_until = now + 1.2
+            self._client_send_cmd("rate", rate)
+            return
+        # 2) 网页里拖了进度
+        if elapsed > 2.5 or abs(delta) < 1.5 or pos <= 0.2:
+            return
+        seek_trace("client.detect.browser", pos=round(pos, 3),
+                   expected=round(expected, 3), delta=round(delta, 3),
+                   rate=rate, playing=str(playing))
+        self._web_hold_until = now + 2.0
+        self._web_cmd_guard_until = now + 1.2
+        self._client_send_cmd("seek", int(round(pos * 1000)))
+
     def _web_apply_remote_url(self, url):
         """主持端: 房客换了页面, 跟着导航。"""
         self._web_ensure_fields()
@@ -7081,8 +7330,20 @@ class VideoPlayerApp:
             elif action == "rate":
                 rate = max(0.25, min(4.0, float(value or 1.0)))
                 self._web_rate = rate
+                self._web_rate_latch = (rate, time.monotonic() + 4.0)
                 position = float(getattr(self, "_web_pos", position) or position)
-            browser.apply(position, playing, rate)
+            seek_trace("host.apply", action=action, value=value,
+                       position=round(position, 3), playing=str(playing),
+                       rate=round(rate, 3), url=str(state.get("url") or "")[-40:])
+            if action == "rate":
+                # 只改倍速; 同时不再重设 currentTime
+                setter = getattr(browser, "set_rate", None)
+                if setter is not None:
+                    setter(rate)
+                else:
+                    browser.apply(position, playing, rate)
+            else:
+                browser.apply(position, playing, rate)
             self._web_seek_latch = (max(0.0, position), time.monotonic() + 3.0)
             self._web_pos = max(0.0, position)
             self._web_playing = bool(playing)
@@ -7098,6 +7359,9 @@ class VideoPlayerApp:
                     "ok": True, "ts": time.monotonic(),
                 }
                 self._host_server.broadcast(payload)
+                seek_trace("host.broadcast", pos=round(position, 3),
+                           rate=round(rate, 3), playing=str(playing),
+                           latch=str(getattr(self, "_web_seek_latch", None)))
                 log.info("远端遥控已应用并广播: %s %r", action, value)
         except Exception:
             log.debug("远程浏览器控制失败", exc_info=True)
@@ -7135,7 +7399,7 @@ class VideoPlayerApp:
         if browser is None:
             self._alert("浏览器未就绪", "请先开始浏览器同步。")
             return
-        text = simpledialog.askstring("打开网址", "输入网址：", parent=self.root)
+        text = simpledialog.askstring(tr("打开网址"), tr("输入网址："), parent=self.root)
         if not text or not text.strip():
             return
         text = text.strip()
@@ -7385,6 +7649,7 @@ class VideoPlayerApp:
         return True
 
     def stop_hosting(self):
+        self.set_playback_controls_enabled(True)
         self._web_shutdown()
         if not self._hosting:
             return
@@ -7613,6 +7878,7 @@ class VideoPlayerApp:
                 "host": self._host_name(),
                 "mode": "web" if getattr(self, "_web_mode", False) else "media",
                 "url": getattr(self, "_web_url", ""),
+                "control": bool(self._host_server.can_control(client_id)),
             })
             log.info("客户端接入: %s (流目标 %s)", name, stream or "无")
             self._broadcast_room()
@@ -7639,12 +7905,22 @@ class VideoPlayerApp:
                         "reason": "rate", "message": "消息发送频率过快",
                     })
         elif message_type == "cmd":
+            seek_trace("host.recv", client=client_id,
+                       action=message.get("action"), value=message.get("value"),
+                       web_mode=str(bool(getattr(self, "_web_mode", False))))
             self._apply_remote_command(client_id, message.get("action"),
                                        message.get("value"))
-        elif message_type == "web_cmd":
-            self._web_remote_command(message.get("action"), message.get("value"))
-        elif message_type == "web_url":
-            self._web_apply_remote_url(message.get("url"))
+        elif message_type in ("web_cmd", "web_url"):
+            if (self._host_server is not None
+                    and not self._host_server.can_control(client_id)):
+                seek_trace("host.reject", client=client_id,
+                           action=message.get("action") or message_type,
+                           value=str(message.get("url") or message.get("value"))[-40:],
+                           reason="view-only")
+            elif message_type == "web_cmd":
+                self._web_remote_command(message.get("action"), message.get("value"))
+            else:
+                self._web_apply_remote_url(message.get("url"))
         elif message_type == "web_ping":
             self._host_server.reply(client_id, {
                 "v": STREAM_VERSION, "type": "web_pong",
@@ -7654,7 +7930,14 @@ class VideoPlayerApp:
             log.debug("忽略未知消息类型: %s", message_type)
 
     def _apply_remote_command(self, client_id, action, value):
+        if self._host_server is not None and not self._host_server.can_control(client_id):
+            log.info("忽略只读房客的控制指令: client=%s action=%s value=%r",
+                     client_id, action, value)
+            seek_trace("host.reject", client=client_id, action=action, value=value,
+                       reason="view-only")
+            return
         if getattr(self, "_web_mode", False):
+            seek_trace("host.route", action=action, value=value, to="browser")
             self._web_remote_command(action, value)
             return
         if self.player is None or self.current_path is None:
@@ -7891,7 +8174,7 @@ class VideoPlayerApp:
         entries = [{"id": "host", "name": host_name, "host": True}]
         entries += [
             {"id": m["id"], "name": m.get("name") or f"客户端-{m['id']}",
-             "host": False}
+             "host": False, "control": bool(m.get("control"))}
             for m in members
         ]
         return {
@@ -7910,6 +8193,32 @@ class VideoPlayerApp:
             self._refresh_stream_button_tooltip()
         self._host_server.broadcast(self._room_message())
         self._refresh_member_dialog()
+
+    def _set_can_control_ui(self, allowed):
+        """房客侧: 只读时灰化播放控件并提示。"""
+        if allowed:
+            if not getattr(self, "_web_mode", False):
+                self.set_playback_controls_enabled(True)
+            self._set_status("主持已允许你参与控制", "ok")
+        else:
+            self.set_playback_controls_enabled(False)
+            self._set_status("只读模式 · 仅主持可控制播放", "idle")
+
+    def _toggle_member_control(self, client_id, allowed):
+        """主持端: 允许/禁止某个房客参与控制。"""
+        if not self._hosting or self._host_server is None or client_id == "host":
+            return
+        if not self._host_server.set_control(client_id, allowed):
+            return
+        names = {m["id"]: m["name"] for m in self._room_message()["members"]}
+        name = names.get(client_id, "成员")
+        self._host_server.send_to(client_id, {"v": STREAM_VERSION,
+                                              "type": "control",
+                                              "allowed": bool(allowed)})
+        log.info("控制权限变更: %s(%s) -> %s", name, client_id,
+                 "可控制" if allowed else "只读")
+        self._set_status(f"{name} 已设为" + ("可控制" if allowed else "只读"), "ok")
+        self._broadcast_room()
 
     def _kick_member(self, client_id):
         """主持端: 把某个房客移出房间。"""
@@ -7941,6 +8250,7 @@ class VideoPlayerApp:
             self.root,
             on_kick=self._kick_member,
             on_close=self._member_dialog_closed,
+            on_toggle_control=self._toggle_member_control,
             is_host=self._hosting,
             my_id="host" if self._hosting else (self._client_id or ""),
         )
@@ -8331,7 +8641,7 @@ class VideoPlayerApp:
             pass
         self._sync_chat_panel()
         self._sync_danmaku()
-        self.root.title(f"同步播放 — {APP_TITLE}")
+        self.root.title(f"{tr('同步播放')} — {APP_TITLE}")
         def connect_worker():
             ok = self._client_connect()
             self.queue_net_event({"kind": "join_result", "ok": ok})
@@ -8342,6 +8652,7 @@ class VideoPlayerApp:
                          name="client-connect").start()
 
     def leave_stream(self):
+        self.set_playback_controls_enabled(True)
         self._web_shutdown()
         if not self._client_active:
             return
@@ -8436,7 +8747,13 @@ class VideoPlayerApp:
             self._client_mark_lost(sock)
 
     def _client_send_cmd(self, action, value=None):
+        if not getattr(self, "_client_can_control", True):
+            seek_trace("client.send.dropped", action=action, value=value,
+                       reason="view-only")
+            return
         if not self._client_connected:
+            seek_trace("client.send.dropped", action=action, value=value,
+                       reason="not-connected")
             return
         self._client_send({"v": STREAM_VERSION, "type": "cmd",
                            "action": action, "value": value})
@@ -8740,6 +9057,11 @@ class VideoPlayerApp:
         if message_type == "need_password":
             log.info("房间需要密码, 等待输入")
             self._prompt_room_password(str(message.get("message") or ""))
+        elif message_type == "control":
+            allowed = bool(message.get("allowed"))
+            self._client_can_control = allowed
+            log.info("控制权限变更(房客侧): %s", "可控制" if allowed else "只读")
+            self._set_can_control_ui(allowed)
         elif message_type == "resync":
             # 主持中断了推流并从新进度/新速度重建: 客户端重新连接 UDP 流
             position = int(message.get("pos") or 0)
@@ -8763,13 +9085,15 @@ class VideoPlayerApp:
             if self._stream_receiver is not None:
                 self._stream_receiver.set_client_id(self._client_id)
             self._close_password_dialog()
+            self._client_can_control = bool(message.get("control"))
             if message.get("mode") == "web":
                 self._web_ensure_fields()
                 self._web_mode = True
+                self.set_playback_controls_enabled(False)
                 self._web_tabs_ready = False
                 self._web_tabs_sig = ()
                 self._web_tab_map = {}
-                # 同步模式不需要媒体接收: 立刻释放占用的本地端口,
+                # 同步模式不需要媒体接收: 立刻释放本机占用的媒体端口,
                 # 这样同一台机器可以同时跑主持和客户端两个实例
                 if self._stream_receiver is not None:
                     try:
@@ -8780,6 +9104,9 @@ class VideoPlayerApp:
                 self._set_status("已加入浏览器同步房间 · 正在打开浏览器…", "ok")
                 self._web_open_browser(str(message.get("url") or ""),
                                        callback=self._web_client_browser_ready)
+            elif not self._client_can_control:
+                # 媒体模式下只读房客: 控件灰化, 但流仍然要接收
+                self.set_playback_controls_enabled(False)
             log.info("主持已确认加入: client_id=%s", self._client_id)
         elif message_type == "web_state":
             if getattr(self, "_web_mode", False):
@@ -8898,7 +9225,7 @@ class VideoPlayerApp:
         self._client_state_ts = time.time()
         name = message.get("name") or ""
         if message.get("file"):
-            self.root.title(f"{name} — 同步播放 — {APP_TITLE}")
+            self.root.title(f"{name} — {tr('同步播放')} — {APP_TITLE}")
         try:
             rate = float(message.get("rate") or 1.0)
         except (TypeError, ValueError):
@@ -9348,6 +9675,10 @@ class VideoPlayerApp:
 
     # ------------------------------------------------------------ playback
     def toggle_play(self):
+        if getattr(self, "_web_mode", False) and not getattr(self, "_web_local_override", False):
+            self._set_status("浏览器同步模式 · 请在浏览器里操作", "idle")
+            return
+
         if self._client_active:
             self._client_send_cmd("toggle")
             return
@@ -9400,6 +9731,12 @@ class VideoPlayerApp:
         self._broadcast_state()
 
     def seek_relative(self, delta_ms):
+        if getattr(self, "_web_mode", False) and not getattr(self, "_web_local_override", False):
+            self._set_status("浏览器同步模式 · 请在浏览器里操作", "idle")
+            return
+        seek_trace("client.seek_relative", delta_ms=delta_ms,
+                   mode="web" if getattr(self, "_web_mode", False) else "media",
+                   client_active=str(bool(self._client_active)))
         if self._client_active:
             self._client_send_cmd("seek_rel", int(delta_ms))
             return
@@ -9440,6 +9777,10 @@ class VideoPlayerApp:
         self._volume_applied = True
 
     def _on_volume_change(self, value):
+        if getattr(self, "_web_mode", False) and not getattr(self, "_web_local_override", False):
+            self._set_status("浏览器同步模式 · 请在浏览器里操作", "idle")
+            return
+
         volume = int(float(value))
         self.volume_label.configure(text=f"{volume}%")
         if self._client_active:
@@ -9492,7 +9833,14 @@ class VideoPlayerApp:
             tooltip.text = "取消静音" if muted else "静音"
 
     def _on_speed_change(self, _event=None):
+        if getattr(self, "_web_mode", False) and not getattr(self, "_web_local_override", False):
+            self._set_status("浏览器同步模式 · 请在浏览器里操作", "idle")
+            return
         rate = self._current_rate()
+        seek_trace("client.speed_change", rate=rate,
+                   mode="web" if getattr(self, "_web_mode", False) else "media",
+                   client_active=str(bool(self._client_active)),
+                   connected=str(bool(self._client_connected)))
         if self._client_active:
             self._client_send_cmd("rate", rate)
             self._web_hold_until = time.monotonic() + 2.0
@@ -9516,6 +9864,10 @@ class VideoPlayerApp:
         self._seeking = True
         if getattr(self, "_web_mode", False):
             self._web_dragging = True
+        seek_trace("client.drag.start",
+                   mode="web" if getattr(self, "_web_mode", False) else "media",
+                   client=str(getattr(self, "_client_active", False)),
+                   duration=getattr(self, "_web_duration", 0.0))
 
     def _on_progress_drag(self, value):
         if getattr(self, "_web_mode", False):
@@ -9544,8 +9896,16 @@ class VideoPlayerApp:
             self._web_hold_until = 0.0
             self._seeking = False
             duration = getattr(self, "_web_duration", 0.0)
+            seek_trace("client.detect",
+                       slider=value, duration=duration,
+                       target_ms=int(float(value) / 1000.0 * duration * 1000),
+                       hosting=str(bool(self._hosting)),
+                       client_active=str(bool(self._client_active)),
+                       connected=str(bool(self._client_connected)))
             if duration <= 0:
                 if self._client_active:
+                    seek_trace("client.send", action="seek_ratio", value=int(float(value)),
+                               reason="no-duration")
                     self._client_send_cmd("seek_ratio", int(float(value)))
                     self._web_hold_until = time.monotonic() + 3.0
                     self.progress_var.set(float(value))
@@ -9555,11 +9915,14 @@ class VideoPlayerApp:
             target = int(float(value) / 1000.0 * duration * 1000)
             self.time_label.configure(text=format_time(target))
             if self._client_active:
+                seek_trace("client.send", action="seek", value=target,
+                           reason="duration-known")
                 self._client_send_cmd("seek", target)
                 # 乐观显示: 2 秒内不让回传的旧进度把滑块打回去
                 self._web_hold_until = time.monotonic() + 2.0
                 self.progress_var.set(float(value))
             else:
+                seek_trace("client.local_apply", action="seek", value=target)
                 self._web_remote_command("seek", target)
             return
         if self._client_active:
@@ -9648,8 +10011,28 @@ class VideoPlayerApp:
         self._fs_chat_visible = False
         self._fs_chat_rect = None
         self.root.attributes("-fullscreen", False)
+        # 全屏退出后清掉可能残留的 TOPMOST 与弹窗状态, 否则窗口会盖在所有窗口之上
+        self.root.attributes("-topmost", True)
+        self.root.attributes("-topmost", False)
+        try:
+            self.root.overrideredirect(False)
+        except tk.TclError:
+            pass
+        try:
+            self.root.state("normal")
+        except tk.TclError:
+            pass
         if self._saved_geometry:
             self.root.geometry(self._saved_geometry)
+        clear_topmost(self.root)
+        self.root.after(80, lambda: clear_topmost(self.root))
+        self.root.after(150, lambda: clear_topmost(self.root))
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_set()
+        except tk.TclError:
+            pass
         # 只把控制栏插回视频区之前, 不重建视频区, 避免打扰 VLC 的输出窗口
         self.deck.pack(side=tk.BOTTOM, fill=tk.X, before=self.content)
         self._sync_chat_panel()
@@ -10095,6 +10478,15 @@ def _free_tcp_port(start, end):
                 continue
             return port
     raise RuntimeError("没有可用的本地调试端口")
+
+
+def seek_trace(stage, **fields):
+    """进度链路追踪: 统一格式, 便于 grep [seek]。"""
+    try:
+        parts = " ".join("%s=%s" % (k, v) for k, v in fields.items())
+        log.info("[seek] %s %s", stage, parts)
+    except Exception:
+        pass
 
 
 def _norm_url(url):
@@ -10913,6 +11305,14 @@ class EdgeBrowserShell:
     @property
     def dead(self):
         return self._dead
+
+    def set_rate(self, rate):
+        """只改播放倍速, 不动 currentTime。"""
+        js = ("(function(){var v=document.querySelector('video');"
+              "if(!v){return 'no-video';}"
+              "try{v.playbackRate=" + repr(float(rate)) + ";}catch(e){}"
+              "return 'ok';})()")
+        return self.evaluate(js)
 
     def cached_tabs(self):
         """UI 侧只读缓存, 不做 HTTP 请求(否则会卡 Tk 主线程)。"""
