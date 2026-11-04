@@ -12,6 +12,12 @@ from np_net import *  # noqa: F401,F403
 from np_widgets import *  # noqa: F401,F403
 
 BROWSER_START_URL = "https://www.bing.com"
+# 起始页: 模板随程序放在 Bin\ 里(相对 __file__ 读), 用的时候再渲染一份到固定目录。
+# 为什么要拷到 C:\Temp: 浏览器打开的是 file:// 绝对路径, 而主持与房客的安装目录
+# 往往不一样; 固定成同一个绝对路径后, 同步过去的 URL 两边都打得开。
+START_PAGE_FILE = "browser_start.html"
+START_PAGE_RUNTIME_DIR = r"C:\Temp"
+START_PAGE_RUNTIME_NAME = "nobplaypot_start.html"
 BROWSER_WINDOW_TITLE = "Nobplaypot 浏览器"
 BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser-profile")
 BROWSER_PROFILE_ROOT = os.path.join(CONFIG_DIR, "browser-profiles")
@@ -363,17 +369,76 @@ _START_PAGE_STRINGS = {
 _START_PAGE_HTML = '<!doctype html>\n<html lang="__LANG__"><head><meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>__TITLE__</title>\n<style>\n:root{--bg:#05070d;--fg:#e8eefc;--mut:#8ea0bd;--acc:#5b8cff;--acc2:#7b5bff;--card:rgba(18,25,38,.62)}\n*{box-sizing:border-box}\nhtml,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden;\nfont-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif}\n#fx{position:fixed;inset:0;z-index:0;display:block}\n.grid{position:fixed;inset:0;z-index:0;opacity:.22;pointer-events:none;\nbackground-image:linear-gradient(rgba(140,170,255,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(140,170,255,.09) 1px,transparent 1px);\nbackground-size:64px 64px;mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 76%)}\n.vignette{position:fixed;inset:0;z-index:1;pointer-events:none;\nbackground:radial-gradient(circle at 50% 38%,transparent 30%,rgba(0,0,0,.55) 100%)}\nmain{position:relative;z-index:3;height:100%;display:flex;flex-direction:column;align-items:center;\njustify-content:center;gap:22px;padding:32px}\n.logo{display:flex;align-items:center;gap:14px;animation:rise .8s cubic-bezier(.2,.8,.2,1) both}\n.mark{width:54px;height:54px;border-radius:16px;position:relative;overflow:hidden;\nbackground:linear-gradient(140deg,var(--acc),var(--acc2));display:grid;place-items:center;\nfont-weight:800;font-size:22px;color:#080c15;box-shadow:0 14px 40px rgba(91,140,255,.45);\nanimation:pulse 3.6s ease-in-out infinite}\n.mark:after{content:"";position:absolute;inset:-40%;background:conic-gradient(from 0deg,transparent,rgba(255,255,255,.65),transparent 40%);\nanimation:spin 4.5s linear infinite}\n@keyframes spin{to{transform:rotate(360deg)}}\n@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}\nh1{font-size:31px;margin:0;letter-spacing:.6px}\n.sub{color:var(--mut);font-size:14px;margin:5px 0 0;letter-spacing:.3px}\n@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}\n.card{width:min(680px,92vw);background:var(--card);border:1px solid rgba(140,170,255,.2);\nborder-radius:18px;padding:20px;backdrop-filter:blur(16px);position:relative;overflow:hidden;\nbox-shadow:0 26px 70px rgba(0,0,0,.5);animation:rise .9s .08s cubic-bezier(.2,.8,.2,1) both}\n.card:before{content:"";position:absolute;inset:0;border-radius:18px;padding:1px;pointer-events:none;\nbackground:linear-gradient(120deg,transparent 20%,rgba(120,160,255,.55),transparent 60%) border-box;\n-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);\n-webkit-mask-composite:xor;mask-composite:exclude;animation:sheen 6s linear infinite}\n@keyframes sheen{0%{background-position:-200% 0}100%{background-position:200% 0}}\nform{display:flex;gap:10px}\ninput{flex:1;padding:15px 16px;font-size:16px;border-radius:12px;border:1px solid #2a3550;\nbackground:rgba(8,12,20,.82);color:var(--fg);outline:none;transition:border-color .2s,box-shadow .2s}\ninput:focus{border-color:var(--acc);box-shadow:0 0 0 4px rgba(91,140,255,.18)}\nbutton.primary{padding:0 24px;font-size:15px;border:0;border-radius:12px;cursor:pointer;font-weight:700;\nbackground:linear-gradient(135deg,var(--acc),var(--acc2));color:#080c15;position:relative;overflow:hidden;\ntransition:transform .15s,filter .2s}\nbutton.primary:hover{transform:translateY(-1px);filter:brightness(1.1)}\n.links{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}\na.chip{flex:1;min-width:150px;text-align:center;padding:12px 14px;border-radius:12px;text-decoration:none;\ncolor:var(--fg);border:1px solid rgba(140,170,255,.24);background:rgba(12,18,30,.72);font-size:14px;\ntransition:transform .18s,border-color .18s,background .18s,box-shadow .18s}\na.chip:hover{transform:translateY(-2px);border-color:var(--acc);background:rgba(28,42,70,.92);\nbox-shadow:0 10px 28px rgba(91,140,255,.28)}\n.quick{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;animation:rise 1s .16s both}\na.site{padding:8px 14px;border-radius:999px;text-decoration:none;color:var(--mut);font-size:13px;\nborder:1px solid rgba(140,170,255,.16);transition:color .18s,border-color .18s,transform .18s}\na.site:hover{color:var(--fg);border-color:var(--acc);transform:translateY(-2px)}\nfooter{position:fixed;bottom:14px;width:100%;text-align:center;color:#4f5f7a;font-size:12px;z-index:3}\n@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}\n</style></head>\n<body>\n<canvas id="fx"></canvas>\n<div class="grid"></div>\n<div class="vignette"></div>\n<main>\n  <div class="logo"><div class="mark">N</div>\n    <div><h1>Nobplaypot</h1><p class="sub">__SUB__</p></div>\n  </div>\n  <div class="card">\n    <form action="https://www.bing.com/search" method="get" target="_self">\n      <input id="q" type="text" name="q" placeholder="__PH__" autofocus autocomplete="off">\n      <button class="primary" type="submit">__SEARCH__</button>\n    </form>\n    <div class="links">\n      <a class="chip" href="https://nobri6039.github.io/Nobplaypot/" target="_blank">__SITE__</a>\n      <a class="chip" href="https://github.com/nobri6039/Nobplaypot" target="_blank">__REPO__</a>\n    </div>\n  </div>\n  <div class="quick">\n    <a class="site" href="https://www.bilibili.com" target="_self">__Q1__</a>\n    <a class="site" href="https://www.youtube.com" target="_self">__Q2__</a>\n    <a class="site" href="https://v.qq.com" target="_self">__Q3__</a>\n    <a class="site" href="https://www.iqiyi.com" target="_self">__Q4__</a>\n  </div>\n</main>\n<footer>__FOOT__</footer>\n<script>\n(function(){\n  var cv=document.getElementById(\'fx\'), ctx=cv.getContext(\'2d\');\n  var W=0,H=0,DPR=1,parts=[],stars=[],shoot=[],t=0;\n  var mouse={x:-9999,y:-9999};\n  function resize(){\n    DPR=Math.min(window.devicePixelRatio||1,2);\n    W=cv.width=Math.floor(innerWidth*DPR); H=cv.height=Math.floor(innerHeight*DPR);\n    cv.style.width=innerWidth+\'px\'; cv.style.height=innerHeight+\'px\';\n    var n=Math.round(Math.min(170,Math.max(60,innerWidth/11)));\n    parts=[];\n    for(var i=0;i<n;i++){\n      parts.push({x:Math.random()*W,y:Math.random()*H,\n        vx:(Math.random()-.5)*.34*DPR,vy:(Math.random()-.5)*.34*DPR,\n        r:(Math.random()*1.6+.6)*DPR, hue:Math.random()<.5?225:265});\n    }\n    stars=[]; for(var k=0;k<90;k++){stars.push({x:Math.random()*W,y:Math.random()*H*.7,r:Math.random()*1.3*DPR,a:Math.random()});}\n  }\n  addEventListener(\'resize\',resize); resize();\n  addEventListener(\'mousemove\',function(e){mouse.x=e.clientX*DPR;mouse.y=e.clientY*DPR;});\n  addEventListener(\'mouseleave\',function(){mouse.x=-9999;mouse.y=-9999;});\n\n  function aurora(){\n    var cx=W*.5, cy=H*.42;\n    for(var i=0;i<3;i++){\n      var ang=t*(0.00035+i*0.00018)+i*2.1;\n      var x=cx+Math.cos(ang)*W*(0.18+i*0.06);\n      var y=cy+Math.sin(ang*1.3)*H*(0.10+i*0.05);\n      var rad=Math.max(W,H)*(0.26+i*0.05)+Math.sin(t*0.0012+i)*30*DPR;\n      var g=ctx.createRadialGradient(x,y,0,x,y,rad);\n      var hue=[225,265,190][i];\n      g.addColorStop(0,\'hsla(\'+hue+\',95%,64%,.34)\');\n      g.addColorStop(.55,\'hsla(\'+hue+\',95%,56%,.13)\');\n      g.addColorStop(1,\'hsla(\'+hue+\',95%,50%,0)\');\n      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);\n    }\n  }\n  function starfield(){\n    ctx.fillStyle=\'#fff\';\n    for(var i=0;i<stars.length;i++){\n      var s=stars[i];\n      s.a=0.25+0.75*Math.abs(Math.sin(t*0.0016+i));\n      ctx.globalAlpha=s.a*0.75;\n      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,6.2832); ctx.fill();\n    }\n    ctx.globalAlpha=1;\n  }\n  function network(){\n    for(var i=0;i<parts.length;i++){\n      var p=parts[i];\n      p.x+=p.vx; p.y+=p.vy;\n      if(p.x<0||p.x>W)p.vx*=-1;\n      if(p.y<0||p.y>H)p.vy*=-1;\n      var dx=p.x-mouse.x, dy=p.y-mouse.y, d2=dx*dx+dy*dy;\n      if(d2<26000*DPR){var f=(1-d2/(26000*DPR))*0.9; p.x+=dx/(Math.sqrt(d2)+1)*f; p.y+=dy/(Math.sqrt(d2)+1)*f;}\n      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,6.2832);\n      ctx.fillStyle=\'hsla(\'+p.hue+\',90%,68%,.85)\'; ctx.fill();\n    }\n    var link=175*DPR;\n    for(var a=0;a<parts.length;a++){\n      for(var b=a+1;b<parts.length;b++){\n        var dx2=parts[a].x-parts[b].x, dy2=parts[a].y-parts[b].y;\n        var dist=Math.sqrt(dx2*dx2+dy2*dy2);\n        if(dist<link){\n          ctx.strokeStyle=\'hsla(232,90%,70%,\'+(0.16*(1-dist/link))+\')\';\n          ctx.lineWidth=.7*DPR; ctx.beginPath();\n          ctx.moveTo(parts[a].x,parts[a].y); ctx.lineTo(parts[b].x,parts[b].y); ctx.stroke();\n        }\n      }\n    }\n    if(mouse.x>0){\n      for(var c=0;c<parts.length;c++){\n        var ddx=parts[c].x-mouse.x, ddy=parts[c].y-mouse.y, dd=Math.sqrt(ddx*ddx+ddy*ddy);\n        if(dd<210*DPR){\n          ctx.strokeStyle=\'hsla(190,95%,72%,\'+(0.35*(1-dd/(210*DPR)))+\')\';\n          ctx.lineWidth=.9*DPR; ctx.beginPath();\n          ctx.moveTo(parts[c].x,parts[c].y); ctx.lineTo(mouse.x,mouse.y); ctx.stroke();\n        }\n      }\n    }\n  }\n  function meteors(){\n    if(shoot.length===0&&Math.random()<0.014){\n      shoot.push({x:Math.random()*W,y:-40*DPR,vx:(1.6+Math.random()*1.4)*DPR,vy:(2.2+Math.random())*DPR,life:1});\n    }\n    for(var i=shoot.length-1;i>=0;i--){\n      var m=shoot[i];\n      m.x+=m.vx*3; m.y+=m.vy*3; m.life-=0.012;\n      var g2=ctx.createLinearGradient(m.x,m.y,m.x-m.vx*70,m.y-m.vy*70);\n      g2.addColorStop(0,\'rgba(190,215,255,\'+m.life+\')\');\n      g2.addColorStop(1,\'rgba(190,215,255,0)\');\n      ctx.strokeStyle=g2; ctx.lineWidth=1.6*DPR; ctx.beginPath();\n      ctx.moveTo(m.x,m.y); ctx.lineTo(m.x-m.vx*70,m.y-m.vy*70); ctx.stroke();\n      if(m.life<=0||m.y>H+60)shoot.splice(i,1);\n    }\n  }\n  function frame(){\n    t=performance.now();\n    ctx.clearRect(0,0,W,H);\n    var bg=ctx.createLinearGradient(0,0,W,H);\n    bg.addColorStop(0,\'#05070d\'); bg.addColorStop(.5,\'#080c16\'); bg.addColorStop(1,\'#060812\');\n    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);\n    aurora(); starfield(); network(); meteors();\n    requestAnimationFrame(frame);\n  }\n  requestAnimationFrame(frame);\n\n  var q=document.getElementById(\'q\'), tips=__TIPS__, ti=0;\n  if(tips.length){setInterval(function(){ti=(ti+1)%tips.length;q.setAttribute(\'placeholder\',tips[ti]);},2600);}\n  document.querySelectorAll(\'a.chip,button.primary\').forEach(function(el){\n    el.addEventListener(\'click\',function(ev){\n      var r=document.createElement(\'span\'), box=el.getBoundingClientRect();\n      r.style.cssText=\'position:fixed;left:\'+(ev.clientX-box.left)+\'px;top:\'+(ev.clientY-box.top)+\'px;\'+\n        \'width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.6);pointer-events:none;\'+\n        \'transform:translate(-50%,-50%);transition:all .55s ease-out;z-index:9\';\n      el.appendChild(r);\n      requestAnimationFrame(function(){r.style.width=\'130px\';r.style.height=\'130px\';r.style.opacity=\'0\';});\n      setTimeout(function(){r.remove();},560);\n    });\n  });\n})();\n</script>\n</body></html>\n'
 
 
+def start_page_template_path():
+    """模板路径 = 程序目录(一般是 Bin) 下的 browser_start.html。"""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), START_PAGE_FILE)
+
+
+def start_page_runtime_path():
+    """渲染后的固定绝对路径(C:\\Temp\\nobplaypot_start.html, 不可写时退到 %TEMP%)。"""
+    for folder in (START_PAGE_RUNTIME_DIR,
+                   os.path.join(tempfile.gettempdir(), "Nobplaypot")):
+        try:
+            os.makedirs(folder, exist_ok=True)
+            probe = os.path.join(folder, ".np_write_probe")
+            with open(probe, "wb") as handle:
+                handle.write(b"1")
+            os.remove(probe)
+            return os.path.join(folder, START_PAGE_RUNTIME_NAME)
+        except OSError:
+            continue
+    return os.path.join(tempfile.gettempdir(), START_PAGE_RUNTIME_NAME)
+
+
+def is_start_page_url(url):
+    """判断 URL 是不是我们自己的本地起始页(不上报给主持, 语言切换时还要刷新它)。"""
+    text = str(url or "").strip().lower()
+    if not text.startswith("file:"):
+        return False
+    for name in (START_PAGE_RUNTIME_NAME.lower(), "start.html"):
+        if name in text:
+            return True
+    return False
+
+
+def ensure_start_page_template():
+    """Bin 里没有模板时, 用内置字符串补一份(安装目录只读就静默跳过)。"""
+    path = start_page_template_path()
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > 64:
+            return path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(_START_PAGE_HTML)
+        return path
+    except OSError:
+        return ""
+
+
+def _load_start_template():
+    """优先读 Bin\\browser_start.html; 读不到(开发目录/被删)才用内置字符串。"""
+    try:
+        with open(start_page_template_path(), "r", encoding="utf-8") as handle:
+            text = handle.read()
+        if "__TITLE__" in text and "__TIPS__" in text:
+            return text
+    except OSError:
+        pass
+    return _START_PAGE_HTML
+
+
 def _write_start_page(lang="zh"):
-    """本地起始页: 搜索 + 项目链接, 跟随界面语言。"""
+    """渲染起始页到固定路径, 返回绝对路径(供 file:// 打开)。"""
     try:
         key = str(lang or "zh").lower()[:2]
         data = dict(_START_PAGE_STRINGS.get(key, _START_PAGE_STRINGS["zh"]))
         data["FOOT"] = data["FOOT"] % APP_VERSION
-        html = _START_PAGE_HTML
+        html = _load_start_template()
         for name, value in data.items():
             html = html.replace("__" + name + "__", value)
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        path = os.path.join(CONFIG_DIR, "start.html")
+        ensure_start_page_template()
+        path = start_page_runtime_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(html)
         return path

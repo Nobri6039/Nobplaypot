@@ -15,7 +15,7 @@ from np_net import _RelayHttpHandler, _cleanup_relay_dir, _prune_relay_files  # 
 from np_widgets import *  # noqa: F401,F403
 
 from np_web import *  # noqa: F401,F403
-from np_web import _write_start_page  # noqa: F401
+from np_web import _write_start_page, is_start_page_url as _is_start_page_url  # noqa: F401
 
 from np_appshare import *  # noqa: F401,F403
 
@@ -2110,7 +2110,7 @@ class VideoPlayerApp:
         # 起始页/浏览器内部页不上报, 否则会把本地文件路径推给主持端
         if url.startswith(("about:", "edge:", "chrome:", "chrome-error:", "devtools:")):
             return
-        if url.lower().startswith("file:") and "start.html" in url:
+        if _is_start_page_url(url):
             return
         if not self._web_url:
             # 还没跟主持同步过页面, 先不反向上报
@@ -2270,7 +2270,7 @@ class VideoPlayerApp:
         except Exception:
             return
         url = str(state.get("url") or "")
-        if "start.html" not in url:
+        if not _is_start_page_url(url):
             return
         path = _write_start_page(self.settings.get("language", "zh"))
         if not path:
