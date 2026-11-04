@@ -6,245 +6,152 @@
 
 # Nobplaypot
 
-A dark-themed video player for Windows built with **VLC (libvlc) + Tkinter**, made for LAN co-watching: host a stream, let others join, protect the room with a password, and control playback / seeking / speed remotely.
+**Share audio, video and control** on your LAN: watch together, and drive a computer together.
 
-> 一个用 **VLC（libvlc）+ Tkinter** 编写的深色视频播放器，支持局域网多人同步观看。
+Three ways to share, one room:
 
-The entire UI is hand-drawn (no stock ttk widgets): anti-aliased rounded corners and icons, a dark title bar, and a floating control island that rises from the bottom in fullscreen.
+- **Media playback** — the host plays a local video, guests watch in sync, and can control seek / speed / volume
+- **App sharing** — stream any window (browser, player, app) to guests, who can also drive the mouse and keyboard
+- **Browser sync** — everyone opens the page, playback positions stay aligned
 
-![Empty state](screenshots/en/main.png)
+Everything is custom-drawn (no default light ttk widgets): antialiased rounded corners, a dark title bar, a floating fullscreen dock, and a bilingual UI.
+
+![Main menu](screenshots/en/menu.png)
 
 ## Screenshots
 
-**Empty state · what you see on first launch**
+**Main menu** — pick what to do instead of landing in a player
 
-<img src="screenshots/en/main.png" width="860" alt="Empty state">
+<img src="screenshots/en/menu.png" width="860" alt="Main menu">
 
-**Playing a local file**
+**Media playback** — seek, speed, volume, audio tracks / subtitles, fullscreen
 
-<img src="screenshots/en/playback.png" width="860" alt="Playing a local file">
+<img src="screenshots/en/player.png" width="860" alt="Media playback">
 
-**Room chat**
+**Shared session** — the host's app-sharing screen (status card + room chat + members/stop)
 
-<img src="screenshots/en/chat.png" width="860" alt="Room chat">
+<img src="screenshots/en/share.png" width="860" alt="Shared session">
 
-**Settings · Streaming**
+**Browser sync** — syncs the page URL and playback position only
 
-<img src="screenshots/en/settings.png" width="620" alt="Settings · Streaming">
+<img src="screenshots/en/web.png" width="860" alt="Browser sync">
 
-**Browser sync · start page**
+**Settings** — 7 tabs; each sharing mode has its own parameters
 
-<img src="screenshots/en/browser-sync.png" width="860" alt="Browser sync start page">
+<img src="screenshots/en/settings.png" width="620" alt="Settings · App sharing">
 
-## What's new in v1.2.4
+## What's new in v1.5.0
 
-- **Per-guest control permission**: hosts can flip each guest between *view only* (default) and *can control* right next to the kick button. View-only guests are rejected at the command gate for seek / rate / play / pause / toggle / seek_rel / seek_ratio / volume / mute / stop / web_cmd / web_url.
-- **Reverse sync from the browser**: seeking, changing playback speed and pausing inside the page are detected by prediction-deviation and reported to the host, so "control in the browser" finally works both ways.
-- **Single authority in browser sync**: the main window's playback controls are greyed out and blocked (including shortcuts) while a browser session is active.
-- **19-stage `[seek]` diagnostics**: every hop of a seek is logged, so a failed drag can be localised from the log alone.
-- **Full bilingual UI**: window titles, dialog titles and Canvas-drawn strings are translated too (375 literals / 285 keys).
-- **Fixes**: window stayed always-on-top after leaving fullscreen; speed changes were reset by seek; guest joining a browser room did not open the browser.
+- **Background capture**: app sharing now uses `PrintWindow` by default, so a window that is fully covered or unfocused still streams its complete picture; if the window refuses (games, some self-drawn apps) it falls back to the screen grab automatically. Both the share dialog toggle and the "Capture mode" setting can switch back. Minimised windows stay impossible to capture — Windows stops compositing them.
+- **Zoom is now purely client-side**: the host always sends the original 100% picture; each guest scales its own window through the linear 25/50/75/100/125/150/175/200% steps without affecting anyone else, auto-picks a smaller step when its screen cannot fit, and the sharing window can no longer be dragged into a stretched shape.
+- **Much lower latency** (measured 45–55 ms → **25–28 ms**): fixed the client using HALFTONE interpolation for a 1-pixel size mismatch (15–24 ms per frame) — blitting is now 0.7 ms; the host blits 1:1 instead of stretching and computes the static-frame fingerprint from the already captured bitmap; the client decodes only the newest frame.
+- **Browser-sync start page ships with the app**: the template lives in `Bin\browser_start.html` and is rendered to `C:\Temp\nobplaypot_start.html`, so host and guest share the same absolute `file://` path and a synced URL opens on both sides.
+- **Per-stage latency logging**: `[lat] frames.recv … wire=… decode=… blit=…` shows whether capture, network or blit is the bottleneck.
+- **Fixes**: the quality dropdown in the share dialog was never packed (a lonely "画质" label was all that showed), zoom above 100% did nothing, the percentage label stuck at 100%, and the English UI missed the quality preset labels.
 
-See [docs/design-supplement.md](docs/design-supplement.md) for the technical write-up.
+Full details: [v1.5.0 release notes](docs/release-notes/RELEASE_NOTES_v1.5.0.md).
 
 ## Features
 
-### Playback
-- Drag & drop a video file, or open one through the custom dark file dialog
-- Play / pause, seek, volume / mute, 0.25x–4.0x playback speed
-- Fullscreen playback with arrow-key seeking and auto-hiding controls
-- Supports MP4 / MKV / AVI / MOV / WMV / FLV / WEBM / TS / RMVB and more
+### Main menu
 
-### UI
-- Everything drawn on Canvas: buttons, sliders, dropdowns, file list, dialogs, empty-state card
-- Anti-aliased icons and rounded corners; the play button is an analytically anti-aliased circle
-- 5 accent colors (Aurora / Violet / Teal / Rose / Amber) × 3 background tones (Midnight / Black / Slate)
-- Hover transition animations, which can be disabled in settings
-- Full English / 中文 UI switch (applied after Save), including every settings page, dialog and status line
+- Four cards: Media playback / App sharing / Browser sync / Join room
+- Bottom row: local playback, settings, view log
+- Going back to the menu ends the current session, so no stale rooms are left behind
 
-### Fullscreen control island
-- Move the mouse toward the bottom of the screen and a rounded floating bar rises — it sits **above** the bottom edge instead of sticking to it
-- Play / pause, skip back / forward, progress, volume, speed, exit fullscreen
-- Slides away 1.6 seconds after the mouse leaves
+### Media playback
 
-### Streaming (LAN / internet)
-- **Host**: opens a TCP command port (default 5000) and a UDP media port (default 5001). At **1x** the host **stream-copies** the source's video/audio ES into TS and sends it over UDP to a local relay; a thin distributor forwards the raw TS datagrams to every registered client. Only non-1x speeds re-encode, using x264 `tune=zerolatency`
-- **Join**: enter the host's command address and the **host's UDP media address** (e.g. `192.168.1.10:5001`). The client sends a small UDP registration packet; the host replies with the raw TS datagrams, which the client re-emits to a local VLC. No client inbound port is needed
-- **Low latency**: the default client buffer is **400 ms** (200–5000 ms in settings). At 1x there is no encoder in the path, so loopback/LAN delay is essentially the client cache plus the network
-- **Resilient playback**: the client VLC owns jitter, reordering and buffering; a watchdog restarts the local picture if the displayed-frame count stops advancing; a rotating-dot buffering overlay appears whenever the play button says "playing" and the picture is not advancing
-- State sync: file, position, duration, pause, speed; clients can remotely play / pause / seek / change speed, while volume and mute stay local
-- Room size and member list sync in real time, up to 32 people (configurable)
+- Drag & drop a video, or open one through the custom dark file dialog
+- Play/pause, seek, volume/mute, 0.25x–4.0x speed
+- Audio track / subtitle switching, fullscreen, danmaku, room chat
+- Hosting jumps straight into the player and asks for a clip
 
-### Browser sync (preview)
-- A second, lighter mode next to media streaming: **no video or audio is relayed**; only the page URL and playback position travel over the existing command port
-- The host and guests each drive their own system browser window; play / pause / seek / speed are mirrored in both directions, and a guest can change the page for everyone
-- Works with any free HTML5 video page — no DRM content, no downloading, no re-streaming of the picture
-- Only one TCP port is needed; no UDP media port is opened in this mode
+### App sharing
 
-### Room password
-- The host can enable a password when starting (on by default); the password stays on the host only
-- When the room is protected, the client is prompted for the password, which is **verified by the host** before the client actually joins
-- Constant-time comparison, at most 5 attempts per connection, and the password is never sent to other clients
+- Pick a window; its picture and input are mirrored live
+- **Frame stream**: JPEG + UDP fragments, 30fps by default (up to 60); unchanged frames skip encoding
+- **Zoom 25%–200%**: re-captures at scale, window and hit area scale with it, 1:1 without cropping
+- **Input**: mouse buttons, wheel, drag, keyboard, and an IME/paste text channel
+- **Permission**: read-only by default; the host grants control per member in Room Members, effective immediately
+- **Background capture**: PrintWindow by default, so a covered or unfocused window still streams its full picture; the legacy screen grab stays available (share dialog / Capture mode setting). Minimised windows are not composed by Windows and cannot be captured
+- Closing the shared window ends the room and guests leave automatically
 
-### Room members
-- Every end — host or guest — can set a display name in **Settings → Chat room** (defaults to the computer name, 4–32 characters)
-- After joining, a **Room members** button appears on the main window
-- The list puts the host first and then guests in join order; it is scrollable (up to 32 people), and the host can remove a guest with the **Kick** button
+### Browser sync
 
-### Room chat
-- After joining, a chat panel appears on the right of the main window (WeChat-style message list with an input box)
-- The host stores all messages; guests send over the command port and only display a message after the host relays it back to everyone (including the sender)
-- New guests receive the full history; the host keeps the latest 200 messages by default (configurable in **Settings → Chat room**)
-- The host can enforce a per-member send interval (unlimited / 1 / 2 / 3 / 5 s); rejected messages show a gray "sending too fast" watermark inside the input box
+- Built-in Edge driven over CDP; each side renders locally, only URL and progress are synced
+- In-page actions (seek, speed, pause) are detected and reported to the host
+- Poll interval, allowed drift and start URL are configurable
 
-### Danmaku
-- New chat messages float over the video as danmaku, right to left — works in windowed and fullscreen mode
-- Each danmaku picks a random lane; when it gets crowded messages queue up and the whole field speeds up automatically, so lanes never overlap
-- Size scales with the video area; the layer is drawn inside the player window, so it moves with the window, follows fullscreen, and is covered normally by other windows; the master switch, size, speed, color and area live in **Settings → Chat room**
+### Rooms
 
-### Seeking / speed changes while streaming
-- Client seeks are never handled locally; the command is sent to the host
-- On a seek or speed change the host: **stops the current stream → rebuilds it from the new position / speed using `:start-time` / `:rate` → broadcasts `resync` → clients reconnect**
-- At 1x the rebuilt stream is still a **stream copy**; only non-1x rates re-encode
-- The stream timeline restarts from 0; clients are back within about a second (or one source keyframe)
+- Room password, member list, kick, per-member control grants, room chat
+- Configurable heartbeat and offline detection; 2–32 people
+
+### Settings
+
+7 tabs: **General / Appearance / Chat / Streaming (shared) / Media playback / Browser sync / App sharing**.
+Streaming only holds what every mode shares (member limit, heartbeat, offline detection, default ports); each mode keeps its own parameters on its own tab.
+
+### Logs
+
+- Per-role files: `%APPDATA%\Nobplaypot\logs\nobplaypot-host.log` and `nobplaypot-client.log`
+- Millisecond timestamps; `[lat]` records per-stage timings, `[appinput]` records capture → send → receive → inject
+
+## Quick start
+
+1. Download and extract `Nobplaypot.zip` (keep the layout: `Nobplaypot.exe` + `Bin\` + `python-runtime\` + `vlc-runtime\`)
+2. Run `Nobplaypot.exe`
+3. Pick a mode on the main menu:
+   - **Media playback** → set ports/password, host, choose a video → guests use **Join room**
+   - **App sharing** → set ports/password, choose the window to share
+   - **Browser sync** → set ports/password, play a video in the opened browser
+4. Guests enter the host address in **Join room** (default TCP 5000 / UDP 5001)
 
 ## Requirements
 
-- **Windows 10 / 11 (64-bit)** — the dark title bar and rounded window corners use Win32 APIs
-- **Python 3.10+** (developed and tested on Python 3.15, Tk 9.0)
-- **VLC 3.x desktop (64-bit)** with `libvlc.dll` (already bundled in the portable release)
-- Python packages:
+- Windows 10 / 11 (x64)
+- No Python or VLC installation needed — portable runtimes ship with the app
+- Browser sync needs Microsoft Edge (preinstalled on Windows 10/11)
+- LAN: the host must allow the TCP command port and the UDP media port
 
-```bash
-pip install python-vlc tkinterdnd2
+## Build & release
+
+The launcher is C++ (VS2019); the payload is the Python modules under `Bin\` plus the portable runtimes, and the launcher verifies a signature and per-file hashes at startup.
+
+```powershell
+# One command: sync modules to Bin -> sign manifest -> build launcher -> copy exe to the repo root
+powershell -ExecutionPolicy Bypass -File tools\release-1.5.0.ps1
+
+# Refresh screenshots only
+powershell -ExecutionPolicy Bypass -File tools\update-screenshots.ps1
 ```
 
-> If the app cannot find VLC, install 64-bit VLC or set the `VLC_HOME` environment variable to the VLC installation folder that contains `libvlc.dll`.
+- `tools\sign.ps1` writes `Bin\payload.manifest` and `payload.sig`
+- `tools\make_start_page.py` generates `Bin\browser_start.html` (the browser-sync start page template; the release script runs it for you)
+- At runtime a rendered copy goes to `C:\Temp\nobplaypot_start.html`: a browser `file://` URL is absolute, and host and guest live in different folders, so the path has to be identical on both machines
+- Public key lives in `launch\pubkey.h`; the private key is `launch\tools\private-key.xml` (**never ship it**)
+- Any change to `Bin`, `python-runtime` or `vlc-runtime` requires re-signing, otherwise the launcher refuses to start
 
-## Installation & Running
+## Layout
 
-```bash
-git clone https://github.com/Nobri6039/Nobplaypot
-
-cd Nobplaypot
-
-pip install python-vlc tkinterdnd2
-
-python Nobplaypot.py
 ```
-
-You can also double-click **`Nobplaypot.pyw`** to start without a console window.
-
-### Portable build (no Python install)
-
-The portable release bundles a **minimal Python 3.15 runtime** (Tkinter, `python-vlc`, `tkinterdnd2`) in `python-runtime/` — about 34 MB, not a full Python installation — plus a **minimal VLC 3.0.24 runtime** in `vlc-runtime/` (about 53 MB). Start it by double-clicking **`启动 Nobplaypot.bat`** or running:
-
-```bat
-python-runtime\pythonw.exe Nobplaypot.pyw
+Nobplaypot.exe           launcher (verifies the payload, then starts pythonw)
+Bin\                     entry point and modules (Nobplaypot.pyw + np_*.py)
+python-runtime\          portable Python
+vlc-runtime\             portable VLC
+launch\                  launcher C++ sources and public key
+docs\                    website and release notes
+tools\                   signing / release / screenshot scripts
+screenshots\             README screenshots (zh / en)
 ```
-
-No Python or VLC installation is required for the portable release. The bundled VLC runtime remains under GPLv2+; see `vlc-runtime/COPYING.txt` and videolan.org for its source.
-
-## Usage
-
-### Keyboard shortcuts
-| Shortcut | Action |
-| --- | --- |
-| `Space` | Play / pause |
-| `←` / `→` | Seek back / forward (step configurable, 5 s by default) |
-| `↑` / `↓` | Volume +5 / −5 |
-| `F` | Enter / exit fullscreen |
-| `Esc` | Exit fullscreen |
-| `Ctrl+O` | Open a file |
-| `Ctrl+L` | Open the log folder |
-
-### Host a streaming session
-1. Open the video you want to watch;
-2. Click the stream button at the bottom-left → **Host stream**;
-3. Enter the command port (TCP, default 5000) and the media port (UDP, default 5001);
-4. "Enable room password" is on by default — enter a password (or turn it off for an open room);
-5. Click **Start hosting**.
-
-### Join a session
-1. Click the stream button → **Join stream**;
-2. Command address: the host's IP:port (e.g. `192.168.1.10:5000`);
-3. Stream address: the **host's UDP media address** (e.g. `192.168.1.10:5001`); the client sends a UDP registration packet and receives the raw TS, so no local listen port is needed;
-4. If the room has a password, a password dialog appears; enter the correct password to join.
-
-> LAN is the easiest setup. For the internet, map the host's **TCP** command port and the host's **UDP** media port on the host's router / firewall; clients only send outbound traffic. If the public mapped port differs from the local one, fill the public address on the client.
-
-### Settings
-Open settings with the gear button at the bottom-right. There are four pages:
-
-- **General**: decode mode (auto / hardware / software, restart required), default volume, seek step, autoplay on open, remember last folder, log level
-- **Appearance**: accent color, background tone, hover animations (colors apply after restart)
-- **Chat room**: username, member message rate limit, chat history limit, danmaku on/off, size, speed, color, area
-- **Streaming**: max room size, per-client bandwidth / resolution / frame rate / audio bitrate / x264 preset / keyframe interval (these only take effect when re-encoding, i.e. **non-1x speed**), client buffer (default **400 ms**, 200–5000 ms), buffering-icon scale (0.5x–2.5x), heartbeat interval, offline timeout, default ports
-
-Settings are stored in `%APPDATA%\Nobplaypot\config.json`. At **1x** the stream is a copy, so resolution/bitrate/frame rate do not change the picture; client buffer and buffering-icon scale apply immediately. Seeking, speed changes and membership changes rebuild the stream (the current position is preserved).
-
-## Data & Logs
-
-| Item | Location |
-| --- | --- |
-| Config | `%APPDATA%\Nobplaypot\config.json` |
-| Logs | `%APPDATA%\Nobplaypot\logs\nobplaypot.log` (2 MB rotation, 3 files) |
-
-Log-related environment variables:
-
-- `NOBPLAYPOT_LOG_LEVEL=DEBUG`: enable debug logging
-- `NOBPLAYPOT_LOG_FILE=<path>`: write logs to a specific file
-
-## Implementation notes
-
-- **Command channel**: TCP + newline-delimited JSON; heartbeat every 2 seconds, offline after 12 seconds without messages; the initial connect runs on a background thread so the UI never freezes on DNS/connect
-- **Stream channel**: at 1x the host's libvlc `sout` **copies** the source's video/audio ES into TS over UDP to a local relay; a thin Python distributor forwards the raw TS datagrams to registered clients; each client re-emits them to a local VLC for rendering. No custom framing, sequence numbers, FEC or NACK — the client VLC handles jitter, reordering and buffering. Only rate ≠ 1x builds the x264 `tune=zerolatency` transcode chain
-- **Seek / speed / membership**: libvlc's sout destination list is fixed at media creation, so a seek or a roster change rebuilds the media; the rebuild re-applies the current position with `:start-time` and `set_time` (and the rate with `:rate`), then broadcasts `resync`; the stream timeline restarts from 0 for clients
-- **Buffering indicator**: the client polls `libvlc_media_get_stats().displayed_pictures` every 250 ms. If the play/pause button says "playing" and the displayed-frame count has not advanced for 450 ms (or is still 0), a transparent rotating-dot overlay is shown; it scales with the video area and the user's buffering-icon scale setting
-- **Password**: verified by the host before a client is registered (`hmac.compare_digest`); unauthenticated connections never enter the room, count toward the room size, or receive the stream
-- **Stability**: libvlc can block for a long time when stopping input or releasing a player, so those calls run on background threads and never on the UI thread; a client-side watchdog restarts the local decoder if the picture stalls
 
 ## Known limitations
 
-- At 1x the picture is the source's own codec/resolution; a source with a very long keyframe interval starts and seeks slower because the client must wait for a keyframe
-- Seeking, speed changes and membership changes briefly reconnect clients (the sout must be rebuilt); the position is preserved
-- CPU is used only for non-1x speed; 4K/high-bitrate sources are limited by the client's decoder and the network
-- One host = one room; designed mainly for LAN use
-- No playlist, subtitles, or aspect-ratio switching yet
-
-## Project structure
-
-```text
-Nobplaypot/
-├── Nobplaypot.py      # main program (single file)
-├── Nobplaypot.pyw     # console-less launcher
-├── screenshots/       # README screenshots
-├── README.md          # English (default)
-├── README.zh-CN.md    # Chinese
-├── .gitignore
-└── LICENSE
-```
-
-## Roadmap
-
-1. Expand to more system platforms
-2. Smoother sync and more feature extensions
-
-## Acknowledgements
-
-- [VLC media player](https://www.videolan.org/) / libvlc
-- [python-vlc](https://github.com/oaubert/python-vlc)
-- [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)
-
-## Author & Copyright
-
-- **Created by DeepSeek V4.1 Flash (AI assistant)** — the code, documentation and screenshots of this project were produced by the AI.
-- **Published and maintained by Nobri6039.**
-- Copyright © 2026 Nobri6039; released under the [MIT License](LICENSE).
-- When redistributing, please credit "Created by DeepSeek V4.1 Flash" and keep this notice.
-
-> The bundled VLC runtime remains under its own GPLv2+ license.
+- App-sharing control relies on window messages: WeChat, most games and some Electron/self-drawn apps ignore synthetic messages and stay view-only
+  (driving them needs `sendinput`, which moves the host cursor)
+- Chinese text goes through the bottom text box; the keyboard path cannot capture IME composition
+- Browser sync depends on the site: some sites reject `playbackRate` changes or `currentTime` seeks
 
 ## License
 
-[MIT](LICENSE)
+See [LICENSE](LICENSE). Made by **Nobri with deepseek**.
