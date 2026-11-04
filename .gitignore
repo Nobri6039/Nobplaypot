@@ -16,5 +16,6 @@ _test_*.mp4
 *.ts
 # 便携运行时不进仓库(随 Release 的 zip 一起发行)
 python-runtime/
+ffmpeg-runtime/
 py315-embed.zip
 Nobplaypot-portable*.zip
