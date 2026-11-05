@@ -74,7 +74,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 
 APP_TITLE = "Nobplaypot"
-APP_VERSION = "v1.3.0"
+APP_VERSION = "v1.5.0"
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA") or os.path.expanduser("~"), "Nobplaypot"
 )
@@ -794,9 +794,9 @@ I18N = {
     "捕获方式": "Capture mode",
     "后台捕获 (被遮挡也能抓)": "Background capture (works while covered)",
     "屏幕截图 (旧)": "Screen grab (legacy)",
-    "后台捕获(PrintWindow): 被遮挡也能抓到完整画面; 屏幕截图(BitBlt): 老方式, 窗口不能被遮挡":
-        "Background capture (PrintWindow) works while covered; "
-        "screen grab (BitBlt) is the legacy path and needs the window unobstructed",
+    "后台捕获: 被遮挡也能抓; 屏幕截图: 窗口不能被遮挡":
+        "Background capture works while covered; screen grab needs the window unobstructed",
+    "屏幕截图": "Screen grab",
     "采集帧率": "Capture frame rate",
     "画面编码": "Frame codec",
     "JPEG 质量": "JPEG quality",

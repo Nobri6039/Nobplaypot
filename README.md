@@ -6,12 +6,12 @@
 
 # Nobplaypot
 
-**Share audio, video and control** on your LAN: watch together, and drive a computer together.
+**A LAN collaboration tool for Windows**: watch together, drive the same app together, browse together.
 
-Three ways to share, one room:
+Three ways to collaborate in one room:
 
 - **Media playback** — the host plays a local video, guests watch in sync, and can control seek / speed / volume
-- **App sharing** — stream any window (browser, player, app) to guests, who can also drive the mouse and keyboard
+- **App sharing** — stream any window (browser, player, app) *with input*: guests really click and type into it, with per-member permission
 - **Browser sync** — everyone opens the page, playback positions stay aligned
 
 Everything is custom-drawn (no default light ttk widgets): antialiased rounded corners, a dark title bar, a floating fullscreen dock, and a bilingual UI.

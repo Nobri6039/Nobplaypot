@@ -136,7 +136,8 @@
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <!-- 发布版不需要 PDB: 大 PDB 在某些机器上会 LNK1201, 这里直接关掉 -->
+      <GenerateDebugInformation>false</GenerateDebugInformation>
       <AdditionalDependencies>bcrypt.lib;shell32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>

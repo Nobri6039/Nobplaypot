@@ -924,7 +924,7 @@ class SettingsDialog(_StreamDialogBase):
                  anchor="w").pack(fill=tk.X)
         if hint:
             tk.Label(left, text=hint, bg=C.BG, fg=C.TEXT_DIM, font=ui_font(8),
-                     anchor="w").pack(fill=tk.X)
+                     anchor="w", justify=tk.LEFT, wraplength=420).pack(fill=tk.X)
         # 固定宽度的右侧控件列: 所有行控件的右边缘都对齐
         right = tk.Frame(row, bg=C.BG, width=300, height=36)
         right.pack(side=tk.RIGHT)
@@ -1162,12 +1162,11 @@ class SettingsDialog(_StreamDialogBase):
             ("frames", "帧直传 (低延迟)"), ("vlc", "ffmpeg + VLC (旧)"),
         ], width=250)
         row = self._row(page, "捕获方式",
-                        "后台捕获(PrintWindow): 被遮挡也能抓到完整画面; "
-                        "屏幕截图(BitBlt): 老方式, 窗口不能被遮挡")
+                        "后台捕获: 被遮挡也能抓; 屏幕截图: 窗口不能被遮挡")
         self._dropdown(row, "app_capture_mode", [
-            ("printwindow", "后台捕获 (被遮挡也能抓)"),
-            ("screen", "屏幕截图 (旧)"),
-        ], width=250)
+            ("printwindow", "后台捕获"),
+            ("screen", "屏幕截图"),
+        ], width=210)
         row = self._row(page, "采集帧率", "越高越跟手, 越吃 CPU 与带宽")
         self._slider(row, "app_frame_fps", 5, 60, lambda v: f"{int(round(v))} fps")
         row = self._row(page, "画面编码", "jpeg 快且小; png 无损但慢很多")
